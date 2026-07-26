@@ -83,10 +83,42 @@ func parseVersion(ver string) (semver.Version, error) {
 	return semver.ParseTolerant(ver)
 }
 
+// compareVersions keeps the historical 2.1.x same-release suffix ordering.
+// For example, 2.1.62 is the second refresh of 2.1.6, while 2.1.7 is the
+// next feature release. Other version lines retain standard semver ordering.
+func compareVersions(left, right semver.Version) int {
+	leftBasePatch, leftRevision := versionPatchOrder(left)
+	rightBasePatch, rightRevision := versionPatchOrder(right)
+
+	leftBase := left
+	leftBase.Patch = leftBasePatch
+	rightBase := right
+	rightBase.Patch = rightBasePatch
+
+	if compared := leftBase.Compare(rightBase); compared != 0 {
+		return compared
+	}
+	if leftRevision < rightRevision {
+		return -1
+	}
+	if leftRevision > rightRevision {
+		return 1
+	}
+	return 0
+}
+
+func versionPatchOrder(version semver.Version) (basePatch, revision uint64) {
+	// This compatibility rule starts with the existing 2.1.61 release and is
+	// deliberately scoped so older upstream tags keep their semver ordering.
+	if version.Major == 2 && version.Minor == 1 && version.Patch >= 61 && version.Patch <= 99 {
+		return version.Patch / 10, version.Patch % 10
+	}
+	return version.Patch, 0
+}
+
 // needUpdate 判断是否需要更新
 func needUpdate(current, latest semver.Version) bool {
-	// 返回最新版本大于当前版本时需要更新
-	return latest.Compare(current) > 0
+	return compareVersions(latest, current) > 0
 }
 
 func detectBuildTrack(version string) buildTrack {
@@ -160,7 +192,7 @@ func selectLatestStableRelease(releases []githubRelease, assetName string) (stab
 		if err != nil {
 			continue
 		}
-		if found && version.Compare(latest.Version) <= 0 {
+		if found && compareVersions(version, latest.Version) <= 0 {
 			continue
 		}
 

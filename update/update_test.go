@@ -62,6 +62,12 @@ func TestNeedUpdate(t *testing.T) {
 		{"0.0.6", "v0.0.6+build.1", false},
 		{"2.1.6+65a346e", "2.1.61", true},
 		{"2.1.61+be3daa4", "2.1.61", false},
+		{"2.1.61", "2.1.62", true},
+		{"2.1.62", "2.1.7", true},
+		{"2.1.7", "2.1.62", false},
+		{"2.1.79", "2.1.8", true},
+		{"2.1.8", "2.1.79", false},
+		{"2.1.99", "2.1.10", true},
 	}
 
 	for _, tt := range tests {
@@ -214,6 +220,25 @@ func TestSelectLatestStableReleaseWaitsForNewestAsset(t *testing.T) {
 	}
 	if got.TagName != "2.1.61" || got.HasAsset {
 		t.Errorf("selectLatestStableRelease() = %+v, want newest release without a ready amd64 asset", got)
+	}
+}
+
+func TestSelectLatestStableReleaseUsesKomariRevisionOrder(t *testing.T) {
+	assetName := "komari-agent-linux-amd64"
+	base := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
+	releases := []githubRelease{
+		testRelease("2.1.62", false, false, base.Add(3*time.Hour), assetName),
+		testRelease("2.1.7", false, false, base.Add(2*time.Hour), assetName),
+		testRelease("2.1.79", false, false, base.Add(time.Hour), assetName),
+		testRelease("2.1.8", false, false, base, assetName),
+	}
+
+	got, ok := selectLatestStableRelease(releases, assetName)
+	if !ok {
+		t.Fatal("selectLatestStableRelease() found no candidate")
+	}
+	if got.TagName != "2.1.8" {
+		t.Errorf("selectLatestStableRelease() tag = %q, want %q", got.TagName, "2.1.8")
 	}
 }
 
