@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"net/http"
 	"testing"
 
 	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
@@ -31,6 +32,12 @@ func TestValidateRuntimeConfig(t *testing.T) {
 		{name: "invalid protocol", mutate: func(c *pkg_flags.Config) { c.ProtocolVersion = 3 }},
 		{name: "ipv4 preferred", mutate: func(c *pkg_flags.Config) { c.PreferIPVersion = "4" }, valid: true},
 		{name: "invalid preferred IP", mutate: func(c *pkg_flags.Config) { c.PreferIPVersion = "auto" }},
+		{name: "Cloudflare Access credentials", mutate: func(c *pkg_flags.Config) {
+			c.CFAccessClientID = "access-id"
+			c.CFAccessClientSecret = "access-secret"
+		}, valid: true},
+		{name: "Cloudflare Access client ID only", mutate: func(c *pkg_flags.Config) { c.CFAccessClientID = "access-id" }},
+		{name: "Cloudflare Access client secret only", mutate: func(c *pkg_flags.Config) { c.CFAccessClientSecret = "access-secret" }},
 	}
 
 	for _, tt := range tests {
@@ -47,5 +54,35 @@ func TestValidateRuntimeConfig(t *testing.T) {
 				t.Fatal("validateRuntimeConfig() expected an error")
 			}
 		})
+	}
+}
+
+func TestAutoDiscoveryUsesSeparateCloudflareAccessHeaders(t *testing.T) {
+	originalKey := flags.AutoDiscoveryKey
+	originalID := flags.CFAccessClientID
+	originalSecret := flags.CFAccessClientSecret
+	flags.AutoDiscoveryKey = "discovery-key"
+	flags.CFAccessClientID = "access-id"
+	flags.CFAccessClientSecret = "access-secret"
+	t.Cleanup(func() {
+		flags.AutoDiscoveryKey = originalKey
+		flags.CFAccessClientID = originalID
+		flags.CFAccessClientSecret = originalSecret
+	})
+
+	request, err := http.NewRequest(http.MethodPost, "https://example.com/api/clients/register", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizeAutoDiscoveryRequest(request)
+
+	if got := request.Header.Get("Authorization"); got != "Bearer discovery-key" {
+		t.Fatalf("Authorization = %q", got)
+	}
+	if got := request.Header.Get("CF-Access-Client-Id"); got != "access-id" {
+		t.Fatalf("CF-Access-Client-Id = %q", got)
+	}
+	if got := request.Header.Get("CF-Access-Client-Secret"); got != "access-secret" {
+		t.Fatalf("CF-Access-Client-Secret = %q", got)
 	}
 }

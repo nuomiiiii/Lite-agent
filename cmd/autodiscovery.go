@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/komari-monitor/komari-agent/dnsresolver"
+	"github.com/komari-monitor/komari-agent/requestheaders"
 	"github.com/komari-monitor/komari-agent/utils"
 )
 
@@ -129,7 +130,7 @@ func registerWithAutoDiscovery() error {
 
 	// 设置请求头
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", flags.AutoDiscoveryKey))
+	authorizeAutoDiscoveryRequest(req)
 
 	// 发送请求
 	client := dnsresolver.GetHTTPClientWithPreference(30*time.Second, flags.PreferIPVersion)
@@ -171,6 +172,11 @@ func registerWithAutoDiscovery() error {
 	log.Printf("Successfully registered with auto-discovery. UUID: %s", registerResp.Data.UUID)
 
 	return nil
+}
+
+func authorizeAutoDiscoveryRequest(request *http.Request) {
+	request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", flags.AutoDiscoveryKey))
+	requestheaders.ApplyCloudflareAccess(request.Header, flags.CFAccessClientID, flags.CFAccessClientSecret)
 }
 
 // handleAutoDiscovery 处理自动发现逻辑

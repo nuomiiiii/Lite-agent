@@ -530,8 +530,7 @@ func establishTerminalConnection(token, id, endpoint string) {
 	// 使用与主 WS 相同的拨号策略
 	dialer := newWSDialer()
 
-	headers := agentAuthorizationHeader(token)
-	headers.Set("X-Komari-Terminal-Session", id)
+	headers := terminalAuthorizationHeader(token, id)
 	conn, _, err := dialer.Dial(endpoint, headers)
 	if err != nil {
 		log.Println("Failed to establish terminal connection:", err)
@@ -553,9 +552,7 @@ func establishRemoteConnection(token, id, ticket, endpoint string) {
 	} else {
 		log.Printf("Warning: Failed to convert remote WebSocket IDN to ASCII: %v", err)
 	}
-	headers := agentAuthorizationHeader(token)
-	headers.Set("X-Komari-Remote-Session", id)
-	headers.Set("X-Komari-Remote-Ticket", ticket)
+	headers := remoteAuthorizationHeader(token, id, ticket)
 	conn, _, err := newWSDialer().Dial(endpoint, headers)
 	if err != nil {
 		log.Println("Failed to establish remote connection:", err)
