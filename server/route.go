@@ -20,6 +20,7 @@ import (
 const routeHopTimeout = 900 * time.Millisecond
 
 var routeProbeMu sync.Mutex
+var routeProbeImplementation = traceRouteICMP
 
 func NewRouteTask(conn *ws.SafeConn, task v2.RouteParams) {
 	if task.TaskID == 0 || strings.TrimSpace(task.Target) == "" {
@@ -32,7 +33,7 @@ func NewRouteTask(conn *ws.SafeConn, task v2.RouteParams) {
 		task.IPVersion = 4
 	}
 	routeProbeMu.Lock()
-	hops, err := traceRouteICMP(task.Target, task.IPVersion, task.MaxHops)
+	hops, err := runRouteProbe(task.Target, task.IPVersion, task.MaxHops)
 	routeProbeMu.Unlock()
 	finishedAt := time.Now()
 	errText := ""
@@ -50,6 +51,16 @@ func NewRouteTask(conn *ws.SafeConn, task v2.RouteParams) {
 	if err := conn.WriteJSON(payload); err != nil {
 		log.Printf("Failed to upload return route result: %v", err)
 	}
+}
+
+func runRouteProbe(target string, version, maxHops int) (hops []v2.RouteHop, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			hops = nil
+			err = fmt.Errorf("built-in route probe failed unexpectedly: %v", recovered)
+		}
+	}()
+	return routeProbeImplementation(target, version, maxHops)
 }
 
 func resolveRouteTarget(target string, version int) (net.IP, error) {
@@ -93,7 +104,10 @@ func traceRouteICMPv4(destination net.IP, maxHops int) ([]v2.RouteHop, error) {
 		return nil, fmt.Errorf("open built-in ICMP route probe (root/CAP_NET_RAW may be required): %w", err)
 	}
 	defer conn.Close()
-	packet := ipv4.NewPacketConn(conn)
+	packet := conn.IPv4PacketConn()
+	if packet == nil {
+		return nil, fmt.Errorf("open built-in IPv4 route probe: packet connection is unavailable")
+	}
 	hops := make([]v2.RouteHop, 0, maxHops)
 	id := os.Getpid() & 0xffff
 	for ttl := 1; ttl <= maxHops; ttl++ {
@@ -139,7 +153,10 @@ func traceRouteICMPv6(destination net.IP, maxHops int) ([]v2.RouteHop, error) {
 		return nil, fmt.Errorf("open built-in IPv6 ICMP route probe (root/CAP_NET_RAW may be required): %w", err)
 	}
 	defer conn.Close()
-	packet := ipv6.NewPacketConn(conn)
+	packet := conn.IPv6PacketConn()
+	if packet == nil {
+		return nil, fmt.Errorf("open built-in IPv6 route probe: packet connection is unavailable")
+	}
 	hops := make([]v2.RouteHop, 0, maxHops)
 	id := os.Getpid() & 0xffff
 	for ttl := 1; ttl <= maxHops; ttl++ {
