@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,7 +67,7 @@ type snapshotReleaseCandidate struct {
 }
 
 type stableReleaseCandidate struct {
-	Version     semver.Version
+	Version     comparableVersion
 	TagName     string
 	Name        string
 	Body        string
@@ -76,27 +77,83 @@ type stableReleaseCandidate struct {
 	HasAsset    bool
 }
 
-// parseVersion 解析可能带有 v/V 前缀，以及预发布或构建元数据的版本字符串
-func parseVersion(ver string) (semver.Version, error) {
+type comparableVersion struct {
+	base             semver.Version
+	revision         uint64
+	explicitRevision bool
+}
+
+func (version comparableVersion) String() string {
+	value := version.base.String()
+	if !version.explicitRevision {
+		return value
+	}
+	core := fmt.Sprintf("%d.%d.%d", version.base.Major, version.base.Minor, version.base.Patch)
+	return strings.Replace(value, core, fmt.Sprintf("%s.%d", core, version.revision), 1)
+}
+
+// parseVersion accepts standard semver and Komari's four-part Agent versions.
+// Three-part versions are treated as revision zero during comparison.
+func parseVersion(ver string) (comparableVersion, error) {
+	ver = strings.TrimSpace(ver)
 	ver = strings.TrimPrefix(ver, "v")
 	ver = strings.TrimPrefix(ver, "V")
-	return semver.ParseTolerant(ver)
+
+	coreEnd := len(ver)
+	if index := strings.IndexAny(ver, "-+"); index >= 0 {
+		coreEnd = index
+	}
+	core := ver[:coreEnd]
+	parts := strings.Split(core, ".")
+	if len(parts) != 4 {
+		base, err := semver.ParseTolerant(ver)
+		if err != nil {
+			return comparableVersion{}, err
+		}
+		return comparableVersion{base: base}, nil
+	}
+
+	revision, err := strconv.ParseUint(parts[3], 10, 64)
+	if err != nil {
+		return comparableVersion{}, fmt.Errorf("invalid fourth version segment %q: %w", parts[3], err)
+	}
+	normalized := strings.Join(parts[:3], ".") + ver[coreEnd:]
+	base, err := semver.ParseTolerant(normalized)
+	if err != nil {
+		return comparableVersion{}, err
+	}
+	return comparableVersion{base: base, revision: revision, explicitRevision: true}, nil
 }
 
 // compareVersions keeps the historical 2.1.x same-release suffix ordering.
 // For example, 2.1.62 is the second refresh of 2.1.6, while 2.1.7 is the
 // next feature release. Other version lines retain standard semver ordering.
-func compareVersions(left, right semver.Version) int {
+func compareVersions(left, right comparableVersion) int {
 	leftBasePatch, leftRevision := versionPatchOrder(left)
 	rightBasePatch, rightRevision := versionPatchOrder(right)
 
-	leftBase := left
+	leftBase := left.base
 	leftBase.Patch = leftBasePatch
-	rightBase := right
+	rightBase := right.base
 	rightBase.Patch = rightBasePatch
 
-	if compared := leftBase.Compare(rightBase); compared != 0 {
-		return compared
+	if leftBase.Major != rightBase.Major {
+		if leftBase.Major < rightBase.Major {
+			return -1
+		}
+		return 1
+	}
+	if leftBase.Minor != rightBase.Minor {
+		if leftBase.Minor < rightBase.Minor {
+			return -1
+		}
+		return 1
+	}
+	if leftBase.Patch != rightBase.Patch {
+		if leftBase.Patch < rightBase.Patch {
+			return -1
+		}
+		return 1
 	}
 	if leftRevision < rightRevision {
 		return -1
@@ -104,20 +161,26 @@ func compareVersions(left, right semver.Version) int {
 	if leftRevision > rightRevision {
 		return 1
 	}
-	return 0
+
+	// The numeric portions are equal. Compare prerelease identifiers using the
+	// existing semver implementation; build metadata remains non-ordering.
+	leftBase.Major, leftBase.Minor, leftBase.Patch = 0, 0, 0
+	rightBase.Major, rightBase.Minor, rightBase.Patch = 0, 0, 0
+	return leftBase.Compare(rightBase)
 }
 
-func versionPatchOrder(version semver.Version) (basePatch, revision uint64) {
+func versionPatchOrder(version comparableVersion) (basePatch, revision uint64) {
 	// This compatibility rule starts with the existing 2.1.61 release and is
-	// deliberately scoped so older upstream tags keep their semver ordering.
-	if version.Major == 2 && version.Minor == 1 && version.Patch >= 61 && version.Patch <= 99 {
-		return version.Patch / 10, version.Patch % 10
+	// deliberately limited to legacy three-part tags. Explicit four-part tags
+	// always use their real patch and revision fields.
+	if !version.explicitRevision && version.base.Major == 2 && version.base.Minor == 1 && version.base.Patch >= 61 && version.base.Patch <= 99 {
+		return version.base.Patch / 10, version.base.Patch % 10
 	}
-	return version.Patch, 0
+	return version.base.Patch, version.revision
 }
 
 // needUpdate 判断是否需要更新
-func needUpdate(current, latest semver.Version) bool {
+func needUpdate(current, latest comparableVersion) bool {
 	return compareVersions(latest, current) > 0
 }
 
@@ -321,7 +384,7 @@ func selfUpdateReleaseFromSnapshot(owner, repo string, candidate snapshotRelease
 func selfUpdateReleaseFromStable(owner, repo string, candidate stableReleaseCandidate) *selfupdate.Release {
 	publishedAt := candidate.PublishedAt
 	return &selfupdate.Release{
-		Version:           candidate.Version,
+		Version:           candidate.Version.base,
 		AssetURL:          candidate.Asset.BrowserDownloadURL,
 		AssetByteSize:     candidate.Asset.Size,
 		AssetID:           candidate.Asset.ID,
@@ -357,7 +420,7 @@ func DoUpdateWorks(initialCheckFailed bool) {
 	}
 }
 
-func checkAndUpdateStable(currentSemVer semver.Version, updater *selfupdate.Updater) error {
+func checkAndUpdateStable(currentVersion comparableVersion, updater *selfupdate.Updater) error {
 	owner, repo, err := splitRepoSlug(Repo)
 	if err != nil {
 		return err
@@ -370,7 +433,7 @@ func checkAndUpdateStable(currentSemVer semver.Version, updater *selfupdate.Upda
 
 	assetName := expectedAssetName(runtime.GOOS, runtime.GOARCH)
 	latest, found := selectLatestStableRelease(releases, assetName)
-	if !found || !needUpdate(currentSemVer, latest.Version) {
+	if !found || !needUpdate(currentVersion, latest.Version) {
 		log.Println("Current version is the latest:", CurrentVersion)
 		return nil
 	}
@@ -461,10 +524,10 @@ func CheckAndUpdate() error {
 		return checkAndUpdateSnapshot(updater)
 	}
 
-	currentSemVer, err := parseVersion(CurrentVersion)
+	currentVersion, err := parseVersion(CurrentVersion)
 	if err != nil {
 		return fmt.Errorf("failed to parse current version: %v", err)
 	}
 
-	return checkAndUpdateStable(currentSemVer, updater)
+	return checkAndUpdateStable(currentVersion, updater)
 }
