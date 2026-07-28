@@ -28,6 +28,14 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run Agent regression tests
+        run: go test ./server ./update
+
       - name: Ensure snapshot target is current
         run: |
           if [ "${GITHUB_REF_NAME}" != "main" ] && [ "${GITHUB_REF_NAME}" != "snapshot-2.1.11-return-route" ]; then
