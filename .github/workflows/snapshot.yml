@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - snapshot-2.1.11-return-route
 
 permissions:
   contents: write
@@ -27,20 +28,20 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Ensure snapshot target is main
+      - name: Ensure snapshot target is current
         run: |
-          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
-            echo "Snapshot builds must run from refs/heads/main. Current ref: ${GITHUB_REF}"
+          if [ "${GITHUB_REF_NAME}" != "main" ] && [ "${GITHUB_REF_NAME}" != "snapshot-2.1.11-return-route" ]; then
+            echo "Unsupported snapshot branch: ${GITHUB_REF_NAME}"
             exit 1
           fi
 
-          git fetch --no-tags --depth=1 origin main
+          git fetch --no-tags --depth=1 origin "${GITHUB_REF_NAME}"
           MAIN_SHA="$(git rev-parse FETCH_HEAD)"
 
           if [ "${GITHUB_SHA}" != "${MAIN_SHA}" ]; then
             echo "Snapshot builds must use the current main commit."
             echo "Workflow SHA: ${GITHUB_SHA}"
-            echo "Current main: ${MAIN_SHA}"
+          echo "Current branch: ${MAIN_SHA}"
             exit 1
           fi
 
@@ -53,7 +54,11 @@ jobs:
       - name: Generate snapshot version
         id: version
         run: |
-          VERSION="Snapshot-$(date -u +%y%m%d%H%M)"
+          if [ "${GITHUB_REF_NAME}" = "snapshot-2.1.11-return-route" ]; then
+            VERSION="Snapshot-2.1.11-$(date -u +%y%m%d%H%M)"
+          else
+            VERSION="Snapshot-$(date -u +%y%m%d%H%M)"
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Snapshot version: ${VERSION}"
 
@@ -114,15 +119,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Ensure commit is still current main
+      - name: Ensure commit is still current branch
         run: |
-          git fetch --no-tags --depth=1 origin main
+          git fetch --no-tags --depth=1 origin "${GITHUB_REF_NAME}"
           MAIN_SHA="$(git rev-parse FETCH_HEAD)"
 
           if [ "${GITHUB_SHA}" != "${MAIN_SHA}" ]; then
             echo "Snapshot publish skipped because a newer main commit exists."
             echo "Workflow SHA: ${GITHUB_SHA}"
-            echo "Current main: ${MAIN_SHA}"
+            echo "Current branch: ${MAIN_SHA}"
             exit 1
           fi
 
@@ -180,15 +185,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Ensure commit is still current main
+      - name: Ensure commit is still current branch
         run: |
-          git fetch --no-tags --depth=1 origin main
+          git fetch --no-tags --depth=1 origin "${GITHUB_REF_NAME}"
           MAIN_SHA="$(git rev-parse FETCH_HEAD)"
 
           if [ "${GITHUB_SHA}" != "${MAIN_SHA}" ]; then
             echo "Snapshot Docker publish skipped because a newer main commit exists."
             echo "Workflow SHA: ${GITHUB_SHA}"
-            echo "Current main: ${MAIN_SHA}"
+            echo "Current branch: ${MAIN_SHA}"
             exit 1
           fi
 

@@ -8,19 +8,21 @@ import (
 )
 
 const (
-	Version               = "2.0"
-	MethodAgentReport     = "agent.report"
-	MethodAgentBasicInfo  = "agent.basicInfo"
-	MethodAgentPingResult = "agent.pingResult"
-	MethodAgentTaskResult = "agent.taskResult"
-	MethodAgentExec       = "agent.exec"
-	MethodAgentPing       = "agent.ping"
-	MethodAgentMessage    = "agent.message"
-	MethodAgentEvent      = "agent.event"
-	MethodAgentTerminal   = "agent.terminal.request"
-	MethodAgentRemote     = "agent.remote.request"
-	MethodAgentConfig     = "agent.config"
-	MethodAgentPull       = "agent.pull"
+	Version                = "2.0"
+	MethodAgentReport      = "agent.report"
+	MethodAgentBasicInfo   = "agent.basicInfo"
+	MethodAgentPingResult  = "agent.pingResult"
+	MethodAgentRouteResult = "agent.routeResult"
+	MethodAgentTaskResult  = "agent.taskResult"
+	MethodAgentExec        = "agent.exec"
+	MethodAgentPing        = "agent.ping"
+	MethodAgentRoute       = "agent.route"
+	MethodAgentMessage     = "agent.message"
+	MethodAgentEvent       = "agent.event"
+	MethodAgentTerminal    = "agent.terminal.request"
+	MethodAgentRemote      = "agent.remote.request"
+	MethodAgentConfig      = "agent.config"
+	MethodAgentPull        = "agent.pull"
 )
 
 type Request struct {
@@ -58,6 +60,21 @@ type EventResult struct {
 
 type ConfigParams struct {
 	MonthRotate int `json:"month_rotate"`
+}
+
+type RouteHop struct {
+	TTL       int     `json:"ttl"`
+	IP        string  `json:"ip,omitempty"`
+	LatencyMS float64 `json:"latency_ms,omitempty"`
+	Timeout   bool    `json:"timeout,omitempty"`
+}
+
+type RouteParams struct {
+	TaskID    uint   `json:"task_id"`
+	Protocol  string `json:"protocol"`
+	Target    string `json:"target"`
+	IPVersion int    `json:"ip_version"`
+	MaxHops   int    `json:"max_hops"`
 }
 
 type RemoteRequestParams struct {
@@ -100,6 +117,18 @@ func BuildPingResultPayload(taskID uint, pingType string, value int, finishedAt 
 			"task_id":     taskID,
 			"ping_type":   pingType,
 			"value":       value,
+			"finished_at": finishedAt.Format(time.RFC3339Nano),
+		},
+	}
+}
+
+func BuildRouteResultPayload(task RouteParams, hops []RouteHop, probeError string, finishedAt time.Time) interface{} {
+	return Request{
+		JSONRPC: Version,
+		Method:  MethodAgentRouteResult,
+		Params: map[string]interface{}{
+			"task_id": task.TaskID, "protocol": task.Protocol, "target": task.Target,
+			"ip_version": task.IPVersion, "hops": hops, "error": probeError,
 			"finished_at": finishedAt.Format(time.RFC3339Nano),
 		},
 	}

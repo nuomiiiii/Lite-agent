@@ -68,6 +68,8 @@ func TestNeedUpdate(t *testing.T) {
 		{"2.1.79", "2.1.8", true},
 		{"2.1.8", "2.1.79", false},
 		{"2.1.99", "2.1.10", true},
+		{"2.1.62", "2.1.11", true},
+		{"2.1.10", "2.1.11", true},
 	}
 
 	for _, tt := range tests {
@@ -94,6 +96,7 @@ func TestDetectBuildTrack(t *testing.T) {
 		{"v1.2.3", stableTrack},
 		{"1.2.3", stableTrack},
 		{"Snapshot-2607061200", snapshotTrack},
+		{"Snapshot-2.1.11-2607282100", snapshotTrack},
 		{"invalid", stableTrack},
 	}
 
