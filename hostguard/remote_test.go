@@ -106,3 +106,23 @@ func TestKomariDockerContainerRecognition(t *testing.T) {
 		})
 	}
 }
+
+func TestDetectKomariServerAllowsRemoteControlOnServerHost(t *testing.T) {
+	previous := serverHostDetector
+	serverHostDetector = func() bool { return true }
+	t.Cleanup(func() { serverHostDetector = previous })
+
+	if reason := detectKomariServer("http://127.0.0.1:25774"); reason != "" {
+		t.Fatalf("server host was still blocked: %q", reason)
+	}
+}
+
+func TestDetectKomariServerKeepsProtectionForOtherNodes(t *testing.T) {
+	previous := serverHostDetector
+	serverHostDetector = func() bool { return false }
+	t.Cleanup(func() { serverHostDetector = previous })
+
+	if reason := detectKomariServer("http://127.0.0.1:25774"); reason == "" {
+		t.Fatal("non-server node lost loopback endpoint protection")
+	}
+}

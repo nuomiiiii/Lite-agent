@@ -32,6 +32,12 @@ type dockerProcess struct {
 	Command string `json:"Command"`
 }
 
+// serverHostDetector is kept injectable so the ordering of the protection
+// rules can be tested without needing a real Komari process or Docker daemon.
+var serverHostDetector = func() bool {
+	return hasKomariServerProcess() || hasKomariDockerContainer()
+}
+
 func RemoteControlBlockedReason(endpoint string) string {
 	if remoteIntegrationBypass() {
 		return ""
@@ -75,17 +81,17 @@ func SetReportedAddresses(addresses ...string) {
 }
 
 func detectKomariServer(endpoint string) string {
+	// A node that hosts the Komari Server is an intentional remote-management
+	// target. Do this check before endpoint/address matching because the Server
+	// endpoint necessarily resolves back to the same node in this deployment.
+	if serverHostDetector() {
+		return ""
+	}
 	if endpointTargetsLocalAddress(endpoint) {
 		return "Remote control is disabled because the Komari Server endpoint resolves to this node"
 	}
 	if endpointTargetsReportedAddress(endpoint, detectionCache.reportedAddresses) {
 		return "Remote control is disabled because the Komari Server endpoint matches this node's reported address"
-	}
-	if hasKomariServerProcess() {
-		return "Remote control is disabled because this node is running Komari Server"
-	}
-	if hasKomariDockerContainer() {
-		return "Remote control is disabled because this node is running Komari Server in Docker"
 	}
 	return ""
 }
