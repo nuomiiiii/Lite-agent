@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
+	"github.com/komari-monitor/komari-agent/runtimeconfig"
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
@@ -183,7 +184,7 @@ func CallFree() RamInfo {
 
 func Ram() RamInfo {
 	// Use global config
-	if pkg_flags.GlobalConfig.MemoryIncludeCache {
+	if runtimeconfig.MemoryIncludeCache() {
 		v, err := mem.VirtualMemory()
 		if err != nil {
 			return RamInfo{}

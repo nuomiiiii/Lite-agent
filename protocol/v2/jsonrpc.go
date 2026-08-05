@@ -59,7 +59,19 @@ type EventResult struct {
 }
 
 type ConfigParams struct {
-	MonthRotate int `json:"month_rotate"`
+	MonthRotate        *int     `json:"month_rotate,omitempty"`
+	Interval           *float64 `json:"interval,omitempty"`
+	IncludeNics        *string  `json:"include_nics,omitempty"`
+	ExcludeNics        *string  `json:"exclude_nics,omitempty"`
+	IncludeMountpoints *string  `json:"include_mountpoints,omitempty"`
+	MemoryIncludeCache *bool    `json:"memory_include_cache,omitempty"`
+	EnableGPU          *bool    `json:"enable_gpu,omitempty"`
+}
+
+type BasicInfoParams struct {
+	Info        map[string]interface{} `json:"info"`
+	ConfigState *ConfigParams          `json:"config_state,omitempty"`
+	Platform    string                 `json:"platform,omitempty"`
 }
 
 type RouteHop struct {
@@ -100,8 +112,12 @@ func BuildReportRequest(id interface{}, report v1.ReportPayload, ackEventIDs []s
 	return NewRequest(id, MethodAgentReport, reportParams{Report: json.RawMessage(report), AckEventIDs: ackEventIDs})
 }
 
-func BuildBasicInfoPayload(info map[string]interface{}) []byte {
-	return NewNotification(MethodAgentBasicInfo, map[string]interface{}{"info": info})
+func BuildBasicInfoPayload(info map[string]interface{}, configState ConfigParams, platform string) []byte {
+	return NewNotification(MethodAgentBasicInfo, BasicInfoParams{
+		Info:        info,
+		ConfigState: &configState,
+		Platform:    platform,
+	})
 }
 
 type reportParams struct {

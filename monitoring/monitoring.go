@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"log"
 
-	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
 	unit "github.com/komari-monitor/komari-agent/monitoring/unit"
+	"github.com/komari-monitor/komari-agent/runtimeconfig"
 )
-
-var flags = pkg_flags.GlobalConfig
 
 type report struct {
 	CPU         cpuReport         `json:"cpu"`
@@ -113,7 +111,7 @@ func GenerateReport() []byte {
 	data.Process = unit.ProcessCount()
 
 	// GPU监控 - 根据标志决定详细程度
-	if flags.EnableGPU {
+	if runtimeconfig.GPUEnabled() {
 		// 详细GPU监控模式
 		gpuInfo, err := unit.GetDetailedGPUInfo()
 		if err != nil {

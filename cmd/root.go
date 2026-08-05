@@ -49,7 +49,15 @@ var RootCmd = &cobra.Command{
 		if err := validateRuntimeConfig(flags); err != nil {
 			return err
 		}
-		runtimeconfig.SetMonthRotateDay(flags.MonthRotate)
+		runtimeconfig.Initialize(runtimeconfig.State{
+			MonthRotate:        flags.MonthRotate,
+			Interval:           flags.Interval,
+			IncludeNics:        flags.IncludeNics,
+			ExcludeNics:        flags.ExcludeNics,
+			IncludeMountpoints: flags.IncludeMountpoints,
+			MemoryIncludeCache: flags.MemoryIncludeCache,
+			EnableGPU:          flags.EnableGPU,
+		})
 		// 捕获中止信号，优雅退出
 		stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -130,6 +138,7 @@ var RootCmd = &cobra.Command{
 			go update.DoUpdateWorks(initialUpdateFailed)
 		}
 		go server.DoUploadBasicInfoWorks()
+		go server.DoRuntimeConfigStateUploadWorks()
 		for {
 			server.UpdateBasicInfo()
 			server.EstablishWebSocketConnection()

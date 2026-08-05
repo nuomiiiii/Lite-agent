@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/komari-monitor/komari-agent/runtimeconfig"
 	"github.com/shirou/gopsutil/v4/disk"
 )
 
@@ -21,8 +22,9 @@ func Disk() DiskInfo {
 		diskinfo.Used = 0
 	} else {
 		// 如果指定了自定义挂载点，只统计指定的挂载点
-		if flags.IncludeMountpoints != "" {
-			includeMounts := strings.Split(flags.IncludeMountpoints, ";")
+		includeMountpoints := runtimeconfig.IncludeMountpoints()
+		if includeMountpoints != "" {
+			includeMounts := strings.Split(includeMountpoints, ";")
 			for _, mountpoint := range includeMounts {
 				mountpoint = strings.TrimSpace(mountpoint)
 				if mountpoint != "" {
@@ -158,8 +160,9 @@ func isPhysicalDisk(part disk.PartitionStat) bool {
 
 func DiskList() ([]string, error) {
 	diskList := []string{}
-	if flags.IncludeMountpoints != "" {
-		includeMounts := strings.Split(flags.IncludeMountpoints, ";")
+	includeMountpoints := runtimeconfig.IncludeMountpoints()
+	if includeMountpoints != "" {
+		includeMounts := strings.Split(includeMountpoints, ";")
 		for _, mountpoint := range includeMounts {
 			mountpoint = strings.TrimSpace(mountpoint)
 			if mountpoint != "" {

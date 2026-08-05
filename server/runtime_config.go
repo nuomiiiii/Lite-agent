@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/komari-monitor/komari-agent/monitoring/netstatic"
 	monitoring "github.com/komari-monitor/komari-agent/monitoring/unit"
@@ -40,37 +41,107 @@ func processBasicInfoResponse(body []byte, protocolVersion int) error {
 		}
 		return nil
 	}
-	return applyRuntimeConfig(*envelope.Config)
+	changed, err := applyRuntimeConfig(*envelope.Config)
+	if err != nil {
+		return err
+	}
+	if changed {
+		requestRuntimeConfigStateUpload()
+	}
+	return nil
 }
 
-func applyRuntimeConfig(config v2.ConfigParams) error {
-	if config.MonthRotate < 0 || config.MonthRotate > 31 {
-		return fmt.Errorf("month_rotate must be 0 or a day from 1 to 31")
+func currentRuntimeConfigParams() v2.ConfigParams {
+	state := runtimeconfig.Snapshot()
+	return v2.ConfigParams{
+		MonthRotate:        &state.MonthRotate,
+		Interval:           &state.Interval,
+		IncludeNics:        &state.IncludeNics,
+		ExcludeNics:        &state.ExcludeNics,
+		IncludeMountpoints: &state.IncludeMountpoints,
+		MemoryIncludeCache: &state.MemoryIncludeCache,
+		EnableGPU:          &state.EnableGPU,
 	}
-	current := runtimeconfig.MonthRotateDay()
-	if current == config.MonthRotate {
-		return nil
-	}
-	if config.MonthRotate == 0 {
-		if err := netstatic.Stop(); err != nil {
-			return fmt.Errorf("stop network statistics: %w", err)
+}
+
+func applyRuntimeConfig(config v2.ConfigParams) (bool, error) {
+	current := runtimeconfig.Snapshot()
+	next := current
+
+	if config.MonthRotate != nil {
+		if *config.MonthRotate < 0 || *config.MonthRotate > 31 {
+			return false, fmt.Errorf("month_rotate must be 0 or a day from 1 to 31")
 		}
-		runtimeconfig.SetMonthRotateDay(0)
-		log.Println("Disabled monthly network traffic reset from Komari config")
-		return nil
+		next.MonthRotate = *config.MonthRotate
+	}
+	if config.Interval != nil {
+		if *config.Interval < 1 || *config.Interval > 3600 {
+			return false, fmt.Errorf("interval must be between 1 and 3600 seconds")
+		}
+		next.Interval = *config.Interval
+	}
+	var err error
+	if config.IncludeNics != nil {
+		next.IncludeNics, err = validateRuntimeText("include_nics", *config.IncludeNics, 1024)
+		if err != nil {
+			return false, err
+		}
+	}
+	if config.ExcludeNics != nil {
+		next.ExcludeNics, err = validateRuntimeText("exclude_nics", *config.ExcludeNics, 1024)
+		if err != nil {
+			return false, err
+		}
+	}
+	if config.IncludeMountpoints != nil {
+		next.IncludeMountpoints, err = validateRuntimeText("include_mountpoints", *config.IncludeMountpoints, 2048)
+		if err != nil {
+			return false, err
+		}
+	}
+	if config.MemoryIncludeCache != nil {
+		next.MemoryIncludeCache = *config.MemoryIncludeCache
+	}
+	if config.EnableGPU != nil {
+		next.EnableGPU = *config.EnableGPU
+	}
+	if next == current {
+		return false, nil
 	}
 
-	if err := netstatic.StartOrContinue(); err != nil {
-		return fmt.Errorf("start network statistics: %w", err)
+	networkConfigChanged := next.MonthRotate != current.MonthRotate ||
+		next.IncludeNics != current.IncludeNics || next.ExcludeNics != current.ExcludeNics
+	if networkConfigChanged {
+		if next.MonthRotate == 0 {
+			if err := netstatic.Stop(); err != nil {
+				return false, fmt.Errorf("stop network statistics: %w", err)
+			}
+		} else {
+			if err := netstatic.StartOrContinue(); err != nil {
+				return false, fmt.Errorf("start network statistics: %w", err)
+			}
+			nics, err := monitoring.InterfaceListForFilters(next.IncludeNics, next.ExcludeNics)
+			if err != nil {
+				return false, fmt.Errorf("list network interfaces: %w", err)
+			}
+			if err := netstatic.SetNewConfig(netstatic.NetStaticConfig{Nics: nics}); err != nil {
+				return false, fmt.Errorf("configure network statistics: %w", err)
+			}
+		}
 	}
-	nics, err := monitoring.InterfaceList()
-	if err != nil {
-		return fmt.Errorf("list network interfaces: %w", err)
+
+	runtimeconfig.Set(next)
+	log.Printf("Applied Komari runtime config: interval=%gs month_rotate=%d", next.Interval, next.MonthRotate)
+	return true, nil
+}
+
+func validateRuntimeText(field, value string, maxLength int) (string, error) {
+	value = strings.TrimSpace(value)
+	if len(value) > maxLength {
+		return "", fmt.Errorf("%s is too long", field)
 	}
-	if err := netstatic.SetNewConfig(netstatic.NetStaticConfig{Nics: nics}); err != nil {
-		return fmt.Errorf("configure network statistics: %w", err)
+	if strings.ContainsAny(value, "\x00\r\n") {
+		return "", fmt.Errorf("%s must not contain control characters", field)
 	}
-	runtimeconfig.SetMonthRotateDay(config.MonthRotate)
-	log.Printf("Updated monthly network traffic reset day to %d from Komari config", config.MonthRotate)
-	return nil
+	return value, nil
 }

@@ -218,8 +218,8 @@ type VnstatOutput struct {
 }
 
 func NetworkSpeed() (totalUp, totalDown, upSpeed, downSpeed uint64, err error) {
-	includeNics := parseNics(flags.IncludeNics)
-	excludeNics := parseNics(flags.ExcludeNics)
+	includeNics := parseNics(runtimeconfig.IncludeNics())
+	excludeNics := parseNics(runtimeconfig.ExcludeNics())
 
 	// 如果设置了月重置（非0），统计totalUp、totalDown
 	resetDay := runtimeconfig.MonthRotateDay()
@@ -366,8 +366,12 @@ func shouldInclude(nicName string, includeNics, excludeNics map[string]struct{})
 }
 
 func InterfaceList() ([]string, error) {
-	includeNics := parseNics(flags.IncludeNics)
-	excludeNics := parseNics(flags.ExcludeNics)
+	return InterfaceListForFilters(runtimeconfig.IncludeNics(), runtimeconfig.ExcludeNics())
+}
+
+func InterfaceListForFilters(include, exclude string) ([]string, error) {
+	includeNics := parseNics(include)
+	excludeNics := parseNics(exclude)
 	interfaces := []string{}
 
 	ioCounters, err := net.IOCounters(true)

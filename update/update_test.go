@@ -272,6 +272,20 @@ func TestSelectLatestStableReleaseSupportsFourPartVersions(t *testing.T) {
 	}
 }
 
+func TestStableAgentUpdatesFrom2111To2200(t *testing.T) {
+	current, err := parseVersion("2.1.11.1+current")
+	if err != nil {
+		t.Fatalf("parse current version: %v", err)
+	}
+	latest, err := parseVersion("2.2.0.0")
+	if err != nil {
+		t.Fatalf("parse latest version: %v", err)
+	}
+	if !needUpdate(current, latest) {
+		t.Fatal("2.1.11.1 should update to 2.2.0.0")
+	}
+}
+
 func TestNextCheckDelay(t *testing.T) {
 	if got := nextCheckDelay(false); got != 6*time.Hour {
 		t.Errorf("nextCheckDelay(false) = %s, want 6h", got)
