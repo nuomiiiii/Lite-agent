@@ -41,19 +41,14 @@ func processBasicInfoResponse(body []byte, protocolVersion int) error {
 		}
 		return nil
 	}
-	changed, err := applyRuntimeConfig(*envelope.Config)
-	if err != nil {
-		return err
-	}
-	if changed {
-		requestRuntimeConfigStateUpload()
-	}
+	processRuntimeConfig(*envelope.Config, "")
 	return nil
 }
 
 func currentRuntimeConfigParams() v2.ConfigParams {
 	state := runtimeconfig.Snapshot()
 	return v2.ConfigParams{
+		Revision:           appliedRuntimeConfigRevision(),
 		MonthRotate:        &state.MonthRotate,
 		Interval:           &state.Interval,
 		IncludeNics:        &state.IncludeNics,

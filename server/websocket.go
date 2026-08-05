@@ -410,6 +410,7 @@ func handleWebSocketMessages(conn *ws.SafeConn, protocolVersion int, done chan<-
 			JSONRPC string      `json:"jsonrpc,omitempty"`
 			Method  string      `json:"method,omitempty"`
 			Params  interface{} `json:"params,omitempty"`
+			ID      interface{} `json:"id,omitempty"`
 			Message string      `json:"message"`
 			// Terminal
 			TerminalId   string `json:"request_id,omitempty"`
@@ -428,7 +429,8 @@ func handleWebSocketMessages(conn *ws.SafeConn, protocolVersion int, done chan<-
 			continue
 		}
 		if message.JSONRPC == v2.Version && protocolVersion >= 2 {
-			processV2Event(conn, message.Method, message.Params, "")
+			eventID, _ := message.ID.(string)
+			processV2Event(conn, message.Method, message.Params, eventID)
 			continue
 		}
 
@@ -512,16 +514,7 @@ func processV2Event(conn *ws.SafeConn, method string, params interface{}, eventI
 			log.Printf("bad v2 config params: %v", err)
 			return false
 		}
-		changed, err := applyRuntimeConfig(p)
-		if err != nil {
-			forgetV2Event(eventID)
-			log.Printf("failed to apply v2 config: %v", err)
-			return false
-		}
-		if changed {
-			requestRuntimeConfigStateUpload()
-		}
-		return true
+		return processRuntimeConfig(p, eventID)
 	case v2.MethodAgentMessage, v2.MethodAgentEvent:
 		log.Printf("received v2 %s: %+v", method, params)
 		return true

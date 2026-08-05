@@ -19,7 +19,7 @@ func TestBuildBasicInfoPayloadReportsOnlyRuntimeSafeConfig(t *testing.T) {
 		IncludeMountpoints: &mounts,
 		MemoryIncludeCache: &memoryCache,
 		EnableGPU:          &gpu,
-	}, runtime.GOOS)
+	}, nil, runtime.GOOS)
 
 	var request struct {
 		Params BasicInfoParams `json:"params"`
@@ -48,7 +48,7 @@ func TestBuildBasicInfoPayloadReportsOnlyRuntimeSafeConfig(t *testing.T) {
 
 func TestBasicInfoConfigStateIsIgnoredByLegacyDecoder(t *testing.T) {
 	interval := 8.0
-	payload := BuildBasicInfoPayload(map[string]interface{}{"version": "2.2.0.0"}, ConfigParams{Interval: &interval}, runtime.GOOS)
+	payload := BuildBasicInfoPayload(map[string]interface{}{"version": "2.2.0.0"}, ConfigParams{Interval: &interval}, nil, runtime.GOOS)
 	var request struct {
 		Params json.RawMessage `json:"params"`
 	}
@@ -63,5 +63,24 @@ func TestBasicInfoConfigStateIsIgnoredByLegacyDecoder(t *testing.T) {
 	}
 	if legacy.Info["version"] != "2.2.0.0" {
 		t.Fatalf("legacy info changed: %+v", legacy.Info)
+	}
+}
+
+func TestBuildBasicInfoPayloadCarriesConfigResult(t *testing.T) {
+	result := &ConfigResultParams{Revision: 9, EventID: "event-9", Status: "failed", Error: "bad interface"}
+	payload := BuildBasicInfoPayload(map[string]interface{}{"version": "2.2.0.1"}, ConfigParams{Revision: 8}, result, runtime.GOOS)
+	var request Request
+	if err := json.Unmarshal(payload, &request); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	var params BasicInfoParams
+	if err := BindParams(request.Params, &params); err != nil {
+		t.Fatalf("bind params: %v", err)
+	}
+	if params.ConfigResult == nil || *params.ConfigResult != *result {
+		t.Fatalf("config result = %+v, want %+v", params.ConfigResult, result)
+	}
+	if params.ConfigState == nil || params.ConfigState.Revision != 8 {
+		t.Fatalf("config state = %+v", params.ConfigState)
 	}
 }

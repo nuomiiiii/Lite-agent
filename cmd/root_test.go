@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
+	"github.com/spf13/cobra"
 )
 
 func validRuntimeConfig() *pkg_flags.Config {
@@ -52,6 +55,70 @@ func TestValidateRuntimeConfig(t *testing.T) {
 			}
 			if !tt.valid && err == nil {
 				t.Fatal("validateRuntimeConfig() expected an error")
+			}
+		})
+	}
+}
+
+func TestLoadEffectiveConfigPrecedence(t *testing.T) {
+	tests := []struct {
+		name      string
+		fileValue bool
+		envValue  string
+		args      []string
+		want      bool
+	}{
+		{
+			name:      "explicit disable flag overrides config file",
+			fileValue: false,
+			args:      []string{"--disable-auto-update"},
+			want:      true,
+		},
+		{
+			name:      "config file keeps automatic updates enabled",
+			fileValue: false,
+			want:      false,
+		},
+		{
+			name:      "environment enables automatic updates",
+			fileValue: true,
+			envValue:  "false",
+			want:      false,
+		},
+		{
+			name:      "explicit false flag overrides environment and config",
+			fileValue: true,
+			envValue:  "true",
+			args:      []string{"--disable-auto-update=false"},
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "agent.json")
+			contents := []byte(`{"disable_auto_update":false}`)
+			if tt.fileValue {
+				contents = []byte(`{"disable_auto_update":true}`)
+			}
+			if err := os.WriteFile(configPath, contents, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Setenv("AGENT_CONFIG_FILE", "")
+			t.Setenv("AGENT_DISABLE_AUTO_UPDATE", tt.envValue)
+			config := &pkg_flags.Config{ConfigFile: configPath}
+			command := &cobra.Command{Use: "test"}
+			command.Flags().BoolVar(&config.DisableAutoUpdate, "disable-auto-update", false, "")
+			command.Flags().StringVar(&config.ConfigFile, "config", configPath, "")
+			if err := command.ParseFlags(tt.args); err != nil {
+				t.Fatal(err)
+			}
+			if err := loadEffectiveConfig(command, config); err != nil {
+				t.Fatal(err)
+			}
+			if config.DisableAutoUpdate != tt.want {
+				t.Fatalf("DisableAutoUpdate = %v, want %v", config.DisableAutoUpdate, tt.want)
 			}
 		})
 	}

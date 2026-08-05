@@ -8,21 +8,22 @@ import (
 )
 
 const (
-	Version                = "2.0"
-	MethodAgentReport      = "agent.report"
-	MethodAgentBasicInfo   = "agent.basicInfo"
-	MethodAgentPingResult  = "agent.pingResult"
-	MethodAgentRouteResult = "agent.routeResult"
-	MethodAgentTaskResult  = "agent.taskResult"
-	MethodAgentExec        = "agent.exec"
-	MethodAgentPing        = "agent.ping"
-	MethodAgentRoute       = "agent.route"
-	MethodAgentMessage     = "agent.message"
-	MethodAgentEvent       = "agent.event"
-	MethodAgentTerminal    = "agent.terminal.request"
-	MethodAgentRemote      = "agent.remote.request"
-	MethodAgentConfig      = "agent.config"
-	MethodAgentPull        = "agent.pull"
+	Version                 = "2.0"
+	MethodAgentReport       = "agent.report"
+	MethodAgentBasicInfo    = "agent.basicInfo"
+	MethodAgentPingResult   = "agent.pingResult"
+	MethodAgentRouteResult  = "agent.routeResult"
+	MethodAgentTaskResult   = "agent.taskResult"
+	MethodAgentExec         = "agent.exec"
+	MethodAgentPing         = "agent.ping"
+	MethodAgentRoute        = "agent.route"
+	MethodAgentMessage      = "agent.message"
+	MethodAgentEvent        = "agent.event"
+	MethodAgentTerminal     = "agent.terminal.request"
+	MethodAgentRemote       = "agent.remote.request"
+	MethodAgentConfig       = "agent.config"
+	MethodAgentConfigResult = "agent.configResult"
+	MethodAgentPull         = "agent.pull"
 )
 
 type Request struct {
@@ -59,6 +60,7 @@ type EventResult struct {
 }
 
 type ConfigParams struct {
+	Revision           uint64   `json:"revision,omitempty"`
 	MonthRotate        *int     `json:"month_rotate,omitempty"`
 	Interval           *float64 `json:"interval,omitempty"`
 	IncludeNics        *string  `json:"include_nics,omitempty"`
@@ -68,10 +70,18 @@ type ConfigParams struct {
 	EnableGPU          *bool    `json:"enable_gpu,omitempty"`
 }
 
+type ConfigResultParams struct {
+	Revision uint64 `json:"revision"`
+	EventID  string `json:"event_id,omitempty"`
+	Status   string `json:"status"`
+	Error    string `json:"error,omitempty"`
+}
+
 type BasicInfoParams struct {
-	Info        map[string]interface{} `json:"info"`
-	ConfigState *ConfigParams          `json:"config_state,omitempty"`
-	Platform    string                 `json:"platform,omitempty"`
+	Info         map[string]interface{} `json:"info"`
+	ConfigState  *ConfigParams          `json:"config_state,omitempty"`
+	ConfigResult *ConfigResultParams    `json:"config_result,omitempty"`
+	Platform     string                 `json:"platform,omitempty"`
 }
 
 type RouteHop struct {
@@ -112,11 +122,12 @@ func BuildReportRequest(id interface{}, report v1.ReportPayload, ackEventIDs []s
 	return NewRequest(id, MethodAgentReport, reportParams{Report: json.RawMessage(report), AckEventIDs: ackEventIDs})
 }
 
-func BuildBasicInfoPayload(info map[string]interface{}, configState ConfigParams, platform string) []byte {
+func BuildBasicInfoPayload(info map[string]interface{}, configState ConfigParams, configResult *ConfigResultParams, platform string) []byte {
 	return NewNotification(MethodAgentBasicInfo, BasicInfoParams{
-		Info:        info,
-		ConfigState: &configState,
-		Platform:    platform,
+		Info:         info,
+		ConfigState:  &configState,
+		ConfigResult: configResult,
+		Platform:     platform,
 	})
 }
 

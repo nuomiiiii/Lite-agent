@@ -21,6 +21,7 @@ import (
 	"github.com/komari-monitor/komari-agent/server"
 	"github.com/komari-monitor/komari-agent/update"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
 )
@@ -32,16 +33,8 @@ var RootCmd = &cobra.Command{
 	Short: "komari agent",
 	Long:  `komari agent`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		loadFromEnv() // 从环境变量加载配置，覆盖解析
-		if flags.ConfigFile != "" {
-			bytes, err := os.ReadFile(flags.ConfigFile)
-			if err != nil {
-				return fmt.Errorf("failed to read config file: %w", err)
-			}
-			err = json.Unmarshal(bytes, flags)
-			if err != nil {
-				return fmt.Errorf("failed to parse config file: %w", err)
-			}
+		if err := loadEffectiveConfig(cmd, flags); err != nil {
+			return err
 		}
 		if flags.ProtocolVersion == 0 {
 			flags.ProtocolVersion = 2
@@ -129,7 +122,9 @@ var RootCmd = &cobra.Command{
 			http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 		}
 		// 自动更新
-		if !flags.DisableAutoUpdate {
+		if flags.DisableAutoUpdate {
+			log.Println("Automatic updates are disabled by configuration.")
+		} else {
 			initialUpdateFailed := false
 			if err := update.CheckAndUpdate(); err != nil {
 				log.Println("[ERROR]", err)
@@ -144,6 +139,46 @@ var RootCmd = &cobra.Command{
 			server.EstablishWebSocketConnection()
 		}
 	},
+}
+
+type explicitFlagValue struct {
+	name  string
+	value string
+}
+
+func loadEffectiveConfig(cmd *cobra.Command, config *pkg_flags.Config) error {
+	explicitFlags := make([]explicitFlagValue, 0)
+	cmd.Flags().Visit(func(flag *pflag.Flag) {
+		explicitFlags = append(explicitFlags, explicitFlagValue{name: flag.Name, value: flag.Value.String()})
+	})
+
+	configPath := config.ConfigFile
+	if envPath := strings.TrimSpace(os.Getenv("AGENT_CONFIG_FILE")); envPath != "" {
+		configPath = envPath
+	}
+	for _, flag := range explicitFlags {
+		if flag.name == "config" {
+			configPath = flag.value
+			break
+		}
+	}
+	if configPath != "" {
+		bytes, err := os.ReadFile(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to read config file: %w", err)
+		}
+		if err := json.Unmarshal(bytes, config); err != nil {
+			return fmt.Errorf("failed to parse config file: %w", err)
+		}
+	}
+
+	loadFromEnv(config)
+	for _, flag := range explicitFlags {
+		if err := cmd.Flags().Set(flag.name, flag.value); err != nil {
+			return fmt.Errorf("failed to restore command line flag --%s: %w", flag.name, err)
+		}
+	}
+	return nil
 }
 
 func validateRuntimeConfig(config *pkg_flags.Config) error {
@@ -230,8 +265,8 @@ func init() {
 	RootCmd.PersistentFlags().ParseErrorsWhitelist.UnknownFlags = true
 }
 
-func loadFromEnv() {
-	val := reflect.ValueOf(flags).Elem()
+func loadFromEnv(config *pkg_flags.Config) {
+	val := reflect.ValueOf(config).Elem()
 	typ := val.Type()
 
 	for i := 0; i < val.NumField(); i++ {
@@ -255,8 +290,8 @@ func loadFromEnv() {
 		case reflect.String:
 			field.SetString(envValue)
 		case reflect.Bool:
-			if strings.ToLower(envValue) == "true" || envValue == "1" {
-				field.SetBool(true)
+			if boolVal, err := strconv.ParseBool(strings.TrimSpace(envValue)); err == nil {
+				field.SetBool(boolVal)
 			}
 		case reflect.Int:
 			if intVal, err := strconv.Atoi(envValue); err == nil {
