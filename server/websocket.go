@@ -32,128 +32,141 @@ var (
 
 const v2SeenEventLimit = 512
 
-func EstablishWebSocketConnection() {
-	var conn *ws.SafeConn
-	defer func() {
-		if conn != nil {
-			conn.Close()
+const websocketHeartbeatInterval = 30 * time.Second
+
+type agentWebSocketSession struct {
+	conn           *ws.SafeConn
+	activeProtocol int
+	readDone       <-chan struct{}
+	nextProtocol   int
+}
+
+func (s *agentWebSocketSession) drop(reason string) {
+	if reason != "" {
+		log.Println(reason)
+	}
+	if s.conn != nil {
+		s.conn.Close()
+		s.conn = nil
+	}
+	s.readDone = nil
+	s.activeProtocol = 0
+	resetConnectionProtocolVersion()
+	if requestedProtocolVersion() >= 2 {
+		s.nextProtocol = 2
+	}
+}
+
+func (s *agentWebSocketSession) attach(conn *ws.SafeConn, protocol int) {
+	s.conn = conn
+	s.activeProtocol = protocol
+	s.nextProtocol = protocol
+	setConnectionProtocolVersion(protocol)
+	done := make(chan struct{})
+	s.readDone = done
+	log.Printf("WebSocket connected using v%d protocol", protocol)
+	go handleWebSocketMessages(conn, protocol, done)
+}
+
+func (s *agentWebSocketSession) dial() (shouldExit bool) {
+	if s.conn != nil {
+		return false
+	}
+	log.Println("Attempting to connect to WebSocket...")
+	retry := 0
+	connectProtocol := s.nextProtocol
+	for retry <= flags.MaxRetries {
+		if retry > 0 {
+			log.Println("Retrying websocket connection, attempt:", retry)
 		}
-		resetConnectionProtocolVersion()
-	}()
-	var err error
+		conn, err := connectWebSocket(buildWebSocketEndpoint(connectProtocol))
+		if err == nil {
+			s.attach(conn, connectProtocol)
+			return false
+		} else if shouldFallbackToV1(connectProtocol, err) {
+			log.Printf("v2 WebSocket endpoint failed (%v), falling back to v1 until this connection is lost", err)
+			connectProtocol = 1
+			retry = 0
+			continue
+		} else {
+			log.Println("Failed to connect to WebSocket:", err)
+		}
+		retry++
+		time.Sleep(time.Duration(flags.ReconnectInterval) * time.Second)
+	}
+
+	log.Println("Max retries reached.")
+	if connectProtocol < 2 {
+		return true
+	}
+	conn, err := runPostFallback(buildWebSocketEndpoint(connectProtocol))
+	if err != nil {
+		if connectProtocol >= 2 && isV2ProtocolFailure(err) {
+			log.Printf("v2 POST fallback failed (%v), falling back to v1 until this connection is lost", err)
+			s.nextProtocol = 1
+			setConnectionProtocolVersion(1)
+			return false
+		}
+		log.Println("POST fallback stopped:", err)
+		return true
+	}
+	log.Println("WebSocket recovered from POST fallback")
+	s.attach(conn, connectProtocol)
+	return false
+}
+
+func EstablishWebSocketConnection() {
+	session := &agentWebSocketSession{nextProtocol: requestedProtocolVersion()}
+	defer session.drop("")
+
 	dataTicker := time.NewTicker(reportIntervalDuration())
 	defer dataTicker.Stop()
 
-	heartbeatTicker := time.NewTicker(30 * time.Second)
+	heartbeatTicker := time.NewTicker(websocketHeartbeatInterval)
 	defer heartbeatTicker.Stop()
 
-	nextProtocol := requestedProtocolVersion()
-	activeProtocol := 0
-	var readDone <-chan struct{}
+	if session.dial() {
+		return
+	}
 
 	for {
 		select {
 		case <-dataTicker.C:
-			if conn == nil {
-				log.Println("Attempting to connect to WebSocket...")
-				retry := 0
-				connectProtocol := nextProtocol
-				for retry <= flags.MaxRetries {
-					if retry > 0 {
-						log.Println("Retrying websocket connection, attempt:", retry)
-					}
-					websocketEndpoint := buildWebSocketEndpoint(connectProtocol)
-					conn, err = connectWebSocket(websocketEndpoint)
-					if err == nil {
-						activeProtocol = connectProtocol
-						nextProtocol = connectProtocol
-						setConnectionProtocolVersion(activeProtocol)
-						log.Printf("WebSocket connected using v%d protocol", activeProtocol)
-						done := make(chan struct{})
-						readDone = done
-						go handleWebSocketMessages(conn, activeProtocol, done)
-						break
-					} else if shouldFallbackToV1(connectProtocol, err) {
-						log.Printf("v2 WebSocket endpoint failed (%v), falling back to v1 until this connection is lost", err)
-						connectProtocol = 1
-						retry = 0
-						continue
-					} else {
-						log.Println("Failed to connect to WebSocket:", err)
-					}
-					retry++
-					time.Sleep(time.Duration(flags.ReconnectInterval) * time.Second)
-				}
-
-				if retry > flags.MaxRetries {
-					log.Println("Max retries reached.")
-					if connectProtocol < 2 {
-						return
-					}
-					conn, err = runPostFallback(buildWebSocketEndpoint(connectProtocol))
-					if err != nil {
-						if connectProtocol >= 2 && isV2ProtocolFailure(err) {
-							log.Printf("v2 POST fallback failed (%v), falling back to v1 until this connection is lost", err)
-							nextProtocol = 1
-							setConnectionProtocolVersion(1)
-							continue
-						}
-						log.Println("POST fallback stopped:", err)
-						return
-					}
-					log.Println("WebSocket recovered from POST fallback")
-					activeProtocol = connectProtocol
-					nextProtocol = connectProtocol
-					setConnectionProtocolVersion(activeProtocol)
-					done := make(chan struct{})
-					readDone = done
-					go handleWebSocketMessages(conn, activeProtocol, done)
-				}
+			if session.dial() {
+				return
 			}
-
-			data := monitoring.GenerateReport()
-			if activeProtocol >= 2 {
-				data = v2.BuildReportPayload(data)
-			}
-			err = conn.WriteMessage(websocket.TextMessage, data)
-			if err != nil {
-				log.Println("Failed to send WebSocket message:", err)
-				conn.Close()
-				conn = nil // Mark connection as dead
-				readDone = nil
-				resetConnectionProtocolVersion()
-				if requestedProtocolVersion() >= 2 {
-					nextProtocol = 2
-				}
+			if session.conn == nil {
 				continue
 			}
+			data := monitoring.GenerateReport()
+			if session.activeProtocol >= 2 {
+				data = v2.BuildReportPayload(data)
+			}
+			if err := session.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+				log.Println("Failed to send WebSocket message:", err)
+				session.drop("WebSocket write failed, reconnecting")
+				if session.dial() {
+					return
+				}
+			}
 		case <-heartbeatTicker.C:
-			if conn != nil {
-				err := conn.WriteMessage(websocket.PingMessage, nil)
-				if err != nil {
-					log.Println("Failed to send heartbeat:", err)
-					conn.Close()
-					conn = nil // Mark connection as dead
-					readDone = nil
-					resetConnectionProtocolVersion()
-					if requestedProtocolVersion() >= 2 {
-						nextProtocol = 2
-					}
+			if session.conn == nil {
+				continue
+			}
+			if err := session.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				log.Println("Failed to send heartbeat:", err)
+				session.drop("WebSocket heartbeat failed, reconnecting")
+				if session.dial() {
+					return
 				}
 			}
 		case <-runtimeconfig.Changes():
 			dataTicker.Reset(reportIntervalDuration())
-		case <-readDone:
-			log.Println("WebSocket disconnected")
-			if conn != nil {
-				conn.Close()
-				conn = nil
-			}
-			readDone = nil
-			activeProtocol = 0
-			resetConnectionProtocolVersion()
-			if requestedProtocolVersion() >= 2 {
-				nextProtocol = 2
+		case <-session.readDone:
+			log.Println("WebSocket disconnected, reconnecting")
+			session.drop("")
+			if session.dial() {
+				return
 			}
 		}
 	}
