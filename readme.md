@@ -199,6 +199,6 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 | `2.2.0.0` | 新增七项在线热更新配置、当前配置同步及明确的七项禁止下发边界。 |
 | `2.2.0.1` | 修复禁用自动更新失效问题，新增配置应用结果回执与最新版本优先合并。 |
 | `2.2.0.2` | 修复 WebSocket 断开后进程仍在、面板显示离线的问题；写超时后立即重连，在线状态不再依赖采集间隔或探测任务。 |
-| `2.3.0.0` | 独立仓 `nuomiiiii/Lite-agent` 发版；自动更新只认本仓 `Lite-agent-*` 产物。默认节点会迁到 Lite 安装目录，进程名为 `Lite-agent`。 |
+| `2.3.0.0` | 独立仓 `nuomiiiii/Lite-agent` 发版；自动更新只认本仓 `Lite-agent-*` 产物。默认节点会迁到 Lite 安装目录，进程名为 `Lite-agent`。WebSocket 增加读超时与心跳保活，握手后检查连接是否还活着，断开后短延迟重连；假死连接大约 1 分钟内会重连。 |
 
 完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-agent/releases)。
