@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/komari-monitor/komari-agent/runtimeconfig"
+	"github.com/nuomiiiii/lite-agent/runtimeconfig"
 )
 
 func TestConnectionsCount(t *testing.T) {

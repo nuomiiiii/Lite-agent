@@ -1,4 +1,4 @@
-# Windows PowerShell installation script for Komari Agent
+# Windows PowerShell installation script for Lite-agent
 
 # Logging functions with colors
 function Log-Info { param([string]$Message) Write-Host "$Message"    -ForegroundColor Cyan }
@@ -9,20 +9,23 @@ function Log-Step { param([string]$Message) Write-Host "$Message"    -Foreground
 function Log-Config { param([string]$Message) Write-Host "- $Message"    -ForegroundColor White }
 
 # Default parameters
-$InstallDir = Join-Path $Env:ProgramFiles "Komari"
-$ServiceName = "komari-agent"
+$InstallDir = Join-Path $Env:ProgramFiles "Lite"
+$ServiceName = "lite-agent"
 $GitHubProxy = ""
-$KomariArgs = @()
+$AgentArgs = @()
 $InstallVersion = ""
+$GitHubRepo = "nuomiiiii/Lite-agent"
+$LegacyServiceName = "komari-agent"
+$CustomLayout = $false
 
 # Parse script arguments
 for ($i = 0; $i -lt $args.Count; $i++) {
     switch ($args[$i]) {
-        "--install-dir" { $InstallDir = $args[$i + 1]; $i++; continue }
-        "--install-service-name" { $ServiceName = $args[$i + 1]; $i++; continue }
+        "--install-dir" { $InstallDir = $args[$i + 1]; $CustomLayout = $true; $i++; continue }
+        "--install-service-name" { $ServiceName = $args[$i + 1]; $CustomLayout = $true; $i++; continue }
         "--install-ghproxy" { $GitHubProxy = $args[$i + 1]; $i++; continue }
         "--install-version" { $InstallVersion = $args[$i + 1]; $i++; continue }
-        Default { $KomariArgs += $args[$i] }
+        Default { $AgentArgs += $args[$i] }
     }
 }
 
@@ -50,6 +53,12 @@ New-Item -ItemType Directory -Path $InstallDir -Force -ErrorAction SilentlyConti
 
 # Check for nssm and download if not present
 $nssmExeToUse = Join-Path $InstallDir "nssm.exe"
+if (-not $CustomLayout) {
+    $legacyNssm = Join-Path (Join-Path $Env:ProgramFiles "Komari") "nssm.exe"
+    if ((Test-Path $legacyNssm) -and -not (Test-Path $nssmExeToUse)) {
+        Copy-Item $legacyNssm $nssmExeToUse -Force
+    }
+}
 
 # First, check if nssm is in PATH and is functional
 $nssmCmd = Get-Command nssm -ErrorAction SilentlyContinue
@@ -159,8 +168,9 @@ catch {
 Log-Step "Installation configuration:"
 Log-Config "Service name: $ServiceName"
 Log-Config "Install directory: $InstallDir"
+Log-Config "Process: $(Join-Path $InstallDir 'Lite-agent.exe')"
 Log-Config "GitHub proxy: $ProxyDisplay"
-Log-Config "Agent arguments: $($KomariArgs -join ' ')"
+Log-Config "Agent arguments: $($AgentArgs -join ' ')"
 if ($InstallVersion -ne "") {
     Log-Config "Specified agent version: $InstallVersion"
 } else {
@@ -168,43 +178,82 @@ if ($InstallVersion -ne "") {
 }
 
 # Paths
-$BinaryName = "komari-agent-windows-$arch.exe"
-$AgentPath = Join-Path $InstallDir "komari-agent.exe"
+$BinaryName = "Lite-agent-windows-$arch.exe"
+$AgentPath = Join-Path $InstallDir "Lite-agent.exe"
+$LegacyDir = Join-Path $Env:ProgramFiles "Komari"
+$LegacyAgentPath = Join-Path $LegacyDir "komari-agent.exe"
 
-# Uninstall previous service and binary
-function Uninstall-Previous {
-    Log-Step "Checking for existing service..."
-    # Check if service exists using nssm status, as Get-Service might not work for nssm services if not properly registered
-    $serviceStatus = nssm status $ServiceName 2>&1
-    if ($serviceStatus -notmatch "SERVICE_STOPPED" -and $serviceStatus -notmatch "does not exist") {
-        Log-Info "Stopping service $ServiceName..."
-        nssm stop $ServiceName 2>&1 | Out-Null
-    }
-    # Attempt to remove the service using nssm
-    # We check if it exists first by trying to get its status.
-    # nssm remove will succeed if the service exists, and fail otherwise.
-    # We add confirm to avoid interactive prompts.
-    $removeOutput = nssm remove $ServiceName confirm 2>&1
-    if ($LASTEXITCODE -eq 0) {
-    }
-    elseif ($removeOutput -match "Can't open service! (The specified service does not exist as an installed service.)" -or $removeOutput -match "No such service" -or $removeOutput -match "does not exist") {
-        Log-Info "Service $ServiceName does not exist or was already removed."
-    }
-    else {
-        # If nssm remove fails for other reasons, try sc.exe delete as a fallback for older installations
-        $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-        if ($svc) {
-            Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue
-            sc.exe delete $ServiceName | Out-Null
+function Copy-SidecarsFrom {
+    param([string]$SourceDir)
+    if (-not (Test-Path $SourceDir) -or $SourceDir -eq $InstallDir) { return }
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    foreach ($name in @("auto-discovery.json", "net_static.json", "net_static.json.bak", "nssm.exe")) {
+        $src = Join-Path $SourceDir $name
+        $dst = Join-Path $InstallDir $name
+        if ((Test-Path $src) -and -not (Test-Path $dst)) {
+            Log-Info "Copying $name from $SourceDir"
+            Copy-Item $src $dst -Force
         }
     }
+}
 
-    if (Test-Path $AgentPath) {
-        Log-Warning "Removing old binary..."
-        Remove-Item $AgentPath -Force
+function Remove-AgentService {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return }
+    Log-Step "Checking for existing service $Name..."
+    $serviceStatus = nssm status $Name 2>&1
+    if ($serviceStatus -notmatch "SERVICE_STOPPED" -and $serviceStatus -notmatch "does not exist") {
+        Log-Info "Stopping service $Name..."
+        nssm stop $Name 2>&1 | Out-Null
+    }
+    $removeOutput = nssm remove $Name confirm 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+    if ($removeOutput -match "Can't open service! (The specified service does not exist as an installed service.)" -or $removeOutput -match "No such service" -or $removeOutput -match "does not exist") {
+        Log-Info "Service $Name does not exist or was already removed."
+        return
+    }
+    $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if ($svc) {
+        Stop-Service $Name -Force -ErrorAction SilentlyContinue
+        sc.exe delete $Name | Out-Null
     }
 }
-Uninstall-Previous
+
+function Wait-AgentService {
+    param([string]$Name)
+    for ($i = 0; $i -lt 15; $i++) {
+        $status = nssm status $Name 2>&1 | Out-String
+        if ($status -match "SERVICE_RUNNING") { return $true }
+        Start-Sleep -Seconds 1
+    }
+    return $false
+}
+
+if (-not $CustomLayout) {
+    Log-Step "Copying sidecar files from the default Komari directory..."
+    Copy-SidecarsFrom -SourceDir $LegacyDir
+}
+else {
+    Log-Step "Custom install layout; leaving komari-agent in place."
+    Remove-AgentService -Name $ServiceName
+}
+
+function Get-LatestTag {
+    param([string]$Repo)
+    $ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
+    $release = Invoke-RestMethod -Uri $ApiUrl -UseBasicParsing
+    return $release.tag_name
+}
+
+function Get-DownloadUrl {
+    param([string]$Repo, [string]$Tag, [string]$Name)
+    if ($GitHubProxy) {
+        return "$GitHubProxy/https://github.com/$Repo/releases/download/$Tag/$Name"
+    }
+    return "https://github.com/$Repo/releases/download/$Tag/$Name"
+}
 
 $versionToInstall = ""
 if ($InstallVersion -ne "") {
@@ -212,11 +261,9 @@ if ($InstallVersion -ne "") {
     $versionToInstall = $InstallVersion
 }
 else {
-    $ApiUrl = "https://api.github.com/repos/nuomiiiii/komari-agent/releases/latest"
     try {
         Log-Step "Fetching latest release version from GitHub API..."
-        $release = Invoke-RestMethod -Uri $ApiUrl -UseBasicParsing
-        $versionToInstall = $release.tag_name
+        $versionToInstall = Get-LatestTag $GitHubRepo
         Log-Success "Latest version fetched: $versionToInstall"
     }
     catch {
@@ -224,39 +271,60 @@ else {
         exit 1
     }
 }
-Log-Success "Installing Komari Agent version: $versionToInstall"
+Log-Success "Installing Lite-agent version: $versionToInstall"
 
-# Construct download URL
-$BinaryName = "komari-agent-windows-$arch.exe"
-$DownloadUrl = if ($GitHubProxy) { "$GitHubProxy/https://github.com/nuomiiiii/komari-agent/releases/download/$versionToInstall/$BinaryName" } else { "https://github.com/nuomiiiii/komari-agent/releases/download/$versionToInstall/$BinaryName" }
-
-# Download and install
-New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-Log-Info "URL: $DownloadUrl"
-try {
-    Invoke-WebRequest -Uri $DownloadUrl -OutFile $AgentPath -UseBasicParsing
+# Stop the destination Lite-agent service before replacing the exe.
+# Leave komari-agent running until the new process is up.
+$existing = nssm status $ServiceName 2>&1 | Out-String
+if ($existing -notmatch "does not exist") {
+    Remove-AgentService -Name $ServiceName
 }
-catch {
-    Log-Error "Download failed: $_"
+
+$downloaded = $false
+foreach ($candidate in @(
+        @{ Repo = $GitHubRepo; Name = $BinaryName }
+    )) {
+    $DownloadUrl = Get-DownloadUrl $candidate.Repo $versionToInstall $candidate.Name
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    Log-Info "URL: $DownloadUrl"
+    try {
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $AgentPath -UseBasicParsing
+        $downloaded = $true
+        break
+    }
+    catch {
+        Log-Warning "Download from $($candidate.Repo)/$($candidate.Name) failed: $_"
+    }
+}
+if (-not $downloaded) {
+    Log-Error "Download failed"
     exit 1
 }
 Log-Success "Downloaded and saved to $AgentPath"
 
 # Register and start service
 Log-Step "Configuring Windows service with nssm..."
-$argString = $KomariArgs -join ' '
-# Ensure InstallDir and AgentPath are quoted if they contain spaces
+$argString = $AgentArgs -join ' '
 $quotedAgentPath = "`"$AgentPath`""
 nssm install $ServiceName $quotedAgentPath $argString
-# Set display name and startup type using nssm
-nssm set $ServiceName DisplayName "Komari Agent Service"
+nssm set $ServiceName DisplayName "Lite Agent Service"
 nssm set $ServiceName Start SERVICE_AUTO_START
 nssm set $ServiceName AppExit Default Restart
 nssm set $ServiceName AppRestartDelay 5000
-# Start the service using nssm
+nssm set $ServiceName AppDirectory $InstallDir
 nssm start $ServiceName
+if (-not (Wait-AgentService -Name $ServiceName)) {
+    Log-Error "Lite-agent service $ServiceName did not become running; leaving komari-agent in place"
+    exit 1
+}
+if (-not $CustomLayout -and $ServiceName -ne $LegacyServiceName) {
+    Log-Step "Retiring legacy service $LegacyServiceName after Lite-agent is running..."
+    nssm set $LegacyServiceName AppExit Default Exit 2>&1 | Out-Null
+    Remove-AgentService -Name $LegacyServiceName
+}
 Log-Success "Service $ServiceName installed and started using nssm."
 
-Log-Success "Komari Agent installation completed!"
+Log-Success "Lite-agent installation completed!"
 Log-Config "Service name: $ServiceName"
+Log-Config "Process: $AgentPath"
 Log-Config "Arguments: $argString"

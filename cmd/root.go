@@ -14,24 +14,25 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/komari-monitor/komari-agent/dnsresolver"
-	"github.com/komari-monitor/komari-agent/monitoring/netstatic"
-	monitoring "github.com/komari-monitor/komari-agent/monitoring/unit"
-	"github.com/komari-monitor/komari-agent/runtimeconfig"
-	"github.com/komari-monitor/komari-agent/server"
-	"github.com/komari-monitor/komari-agent/update"
+	"github.com/nuomiiiii/lite-agent/dnsresolver"
+	"github.com/nuomiiiii/lite-agent/monitoring/netstatic"
+	monitoring "github.com/nuomiiiii/lite-agent/monitoring/unit"
+	"github.com/nuomiiiii/lite-agent/relocate"
+	"github.com/nuomiiiii/lite-agent/runtimeconfig"
+	"github.com/nuomiiiii/lite-agent/server"
+	"github.com/nuomiiiii/lite-agent/update"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
+	pkg_flags "github.com/nuomiiiii/lite-agent/cmd/flags"
 )
 
 var flags = pkg_flags.GlobalConfig
 
 var RootCmd = &cobra.Command{
-	Use:   "komari-agent",
-	Short: "komari agent",
-	Long:  `komari agent`,
+	Use:   "Lite-agent",
+	Short: "Lite agent",
+	Long:  `Lite agent`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := loadEffectiveConfig(cmd, flags); err != nil {
 			return err
@@ -41,6 +42,12 @@ var RootCmd = &cobra.Command{
 		}
 		if err := validateRuntimeConfig(flags); err != nil {
 			return err
+		}
+		if relocated, err := relocate.RelocateIfNeeded(); err != nil {
+			log.Println("layout relocation failed; continuing on the current path:", err)
+		} else if relocated {
+			log.Println("layout relocation handed off to Lite-agent")
+			os.Exit(0)
 		}
 		runtimeconfig.Initialize(runtimeconfig.State{
 			MonthRotate:        flags.MonthRotate,
@@ -67,7 +74,7 @@ var RootCmd = &cobra.Command{
 		}
 
 		if !flags.DisableWebSsh {
-			go WarnKomariRunning()
+			go WarnLiteRunning()
 		}
 
 		if flags.MonthRotate != 0 {
@@ -87,7 +94,7 @@ var RootCmd = &cobra.Command{
 			}
 		}
 
-		log.Println("Komari Agent", update.CurrentVersion)
+		log.Println("Lite Agent", update.CurrentVersion)
 		log.Println("Github Repo:", update.Repo)
 
 		// 设置 DNS 解析行为

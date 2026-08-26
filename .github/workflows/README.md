@@ -1,6 +1,6 @@
 # Workflow Design Notes
 
-This directory contains the GitHub Actions workflows for Komari Agent. Keep this
+This directory contains the GitHub Actions workflows for Lite-agent. Keep this
 document updated when changing release, snapshot, or Docker publishing behavior.
 
 The important design split is:
@@ -25,15 +25,15 @@ The important design split is:
 Binary names must remain compatible with the updater, installer scripts, and
 Dockerfile:
 
-- Release and snapshot assets are named `komari-agent-${GOOS}-${GOARCH}`.
+- Release and snapshot assets are named `Lite-agent-${GOOS}-${GOARCH}`.
 - Windows assets append `.exe`.
 - The Dockerfile expects prebuilt Linux binaries named
-  `komari-agent-${TARGETOS}-${TARGETARCH}` in the Docker build context.
+  `Lite-agent-${TARGETOS}-${TARGETARCH}` in the Docker build context.
 
 The agent version and update repository are embedded with:
 
 ```sh
--ldflags="-X github.com/komari-monitor/komari-agent/update.CurrentVersion=${VERSION}+${GITHUB_SHA::7} -X github.com/komari-monitor/komari-agent/update.Repo=${GITHUB_REPOSITORY}"
+-ldflags="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION}+${GITHUB_SHA::7} -X github.com/nuomiiiii/lite-agent/update.Repo=${GITHUB_REPOSITORY}"
 ```
 
 Do not remove this without changing the agent update and reporting logic. Stable
@@ -106,7 +106,7 @@ Binary release job:
 - Builds the same OS/architecture matrix as the normal release workflow.
 - Uploads all binaries as workflow artifacts.
 - Creates a GitHub release with `--prerelease`.
-- Uploads all `komari-agent-*` artifacts to that prerelease.
+- Uploads all `Lite-agent-*` artifacts to that prerelease.
 
 Snapshot retention:
 
@@ -148,7 +148,7 @@ Container-based updates and binary self-updates are different mechanisms:
 - The agent's own self-update logic updates the binary inside the running
   container filesystem. That does not update the Docker image. If the container
   is recreated, the image contents win again.
-- The Dockerfile creates `/.komari-agent-container`. Snapshot-aware auto-update
+- The Dockerfile creates `/.lite-agent-container` and keeps `/.komari-agent-container` for agents upgraded from komari-agent. Snapshot-aware auto-update
   uses that marker to skip binary self-update in containers and leave updates to
   image refresh tooling.
 
@@ -245,7 +245,7 @@ Snapshot auto-update behavior:
   asset name.
 - Snapshot agents update only to another snapshot prerelease.
 - Snapshot agents running in Docker skip binary self-update when
-  `/.komari-agent-container` exists.
+  `/.lite-agent-container` or `/.komari-agent-container` exists.
 
 The Docker image tag is not used as the binary version source. The Docker tag is
 always `snapshot` by design. Snapshot binary update decisions use the embedded
@@ -254,7 +254,7 @@ metadata instead.
 
 Container guidance for future update changes:
 
-- A binary running in Docker can potentially replace `/app/komari-agent`, but
+- A binary running in Docker can potentially replace `/app/lite-agent`, but
   that only changes the container's writable layer.
 - After self-update, the current code exits with status `42`; the container needs
   a restart policy or external supervisor to come back.

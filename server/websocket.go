@@ -11,16 +11,17 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/komari-monitor/komari-agent/dnsresolver"
-	"github.com/komari-monitor/komari-agent/monitoring"
-	v2 "github.com/komari-monitor/komari-agent/protocol/v2"
-	"github.com/komari-monitor/komari-agent/runtimeconfig"
-	"github.com/komari-monitor/komari-agent/terminal"
-	"github.com/komari-monitor/komari-agent/utils"
-	"github.com/komari-monitor/komari-agent/ws"
+	"github.com/nuomiiiii/lite-agent/dnsresolver"
+	"github.com/nuomiiiii/lite-agent/monitoring"
+	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
+	"github.com/nuomiiiii/lite-agent/runtimeconfig"
+	"github.com/nuomiiiii/lite-agent/terminal"
+	"github.com/nuomiiiii/lite-agent/utils"
+	"github.com/nuomiiiii/lite-agent/ws"
 )
 
 var (
@@ -32,7 +33,12 @@ var (
 
 const v2SeenEventLimit = 512
 
-const websocketHeartbeatInterval = 30 * time.Second
+const (
+	websocketHeartbeatInterval    = 30 * time.Second
+	websocketPongWait             = 60 * time.Second
+	websocketHandshakeAliveWait   = 10 * time.Second
+	websocketReconnectDelay       = 1500 * time.Millisecond
+)
 
 type agentWebSocketSession struct {
 	conn           *ws.SafeConn
@@ -64,7 +70,6 @@ func (s *agentWebSocketSession) attach(conn *ws.SafeConn, protocol int) {
 	setConnectionProtocolVersion(protocol)
 	done := make(chan struct{})
 	s.readDone = done
-	log.Printf("WebSocket connected using v%d protocol", protocol)
 	go handleWebSocketMessages(conn, protocol, done)
 }
 
@@ -145,6 +150,7 @@ func EstablishWebSocketConnection() {
 			if err := session.conn.WriteMessage(websocket.TextMessage, data); err != nil {
 				log.Println("Failed to send WebSocket message:", err)
 				session.drop("WebSocket write failed, reconnecting")
+				time.Sleep(websocketReconnectDelay)
 				if session.dial() {
 					return
 				}
@@ -156,6 +162,7 @@ func EstablishWebSocketConnection() {
 			if err := session.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				log.Println("Failed to send heartbeat:", err)
 				session.drop("WebSocket heartbeat failed, reconnecting")
+				time.Sleep(websocketReconnectDelay)
 				if session.dial() {
 					return
 				}
@@ -165,6 +172,7 @@ func EstablishWebSocketConnection() {
 		case <-session.readDone:
 			log.Println("WebSocket disconnected, reconnecting")
 			session.drop("")
+			time.Sleep(websocketReconnectDelay)
 			if session.dial() {
 				return
 			}
@@ -413,12 +421,29 @@ func connectWebSocket(websocketEndpoint string) (*ws.SafeConn, error) {
 
 func handleWebSocketMessages(conn *ws.SafeConn, protocolVersion int, done chan<- struct{}) {
 	defer close(done)
+	var alive atomic.Bool
+	markAlive := func() {
+		if alive.CompareAndSwap(false, true) {
+			log.Printf("WebSocket connected using v%d protocol", protocolVersion)
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(websocketPongWait))
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(websocketHandshakeAliveWait))
+	conn.SetPongHandler(func(string) error {
+		markAlive()
+		return nil
+	})
+	if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+		log.Println("Failed to send heartbeat:", err)
+		return
+	}
 	for {
 		_, message_raw, err := conn.ReadMessage()
 		if err != nil {
 			log.Println("WebSocket read error:", err)
 			return
 		}
+		markAlive()
 		var message struct {
 			JSONRPC string      `json:"jsonrpc,omitempty"`
 			Method  string      `json:"method,omitempty"`

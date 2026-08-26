@@ -3,8 +3,8 @@ package server
 import (
 	"testing"
 
-	v2 "github.com/komari-monitor/komari-agent/protocol/v2"
-	"github.com/komari-monitor/komari-agent/runtimeconfig"
+	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
+	"github.com/nuomiiiii/lite-agent/runtimeconfig"
 )
 
 func TestProcessBasicInfoResponseAppliesDisabledConfig(t *testing.T) {

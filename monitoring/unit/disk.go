@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/komari-monitor/komari-agent/runtimeconfig"
+	"github.com/nuomiiiii/lite-agent/runtimeconfig"
 	"github.com/shirou/gopsutil/v4/disk"
 )
 

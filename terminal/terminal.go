@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/komari-monitor/komari-agent/hostguard"
+	"github.com/nuomiiiii/lite-agent/hostguard"
 
-	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
+	pkg_flags "github.com/nuomiiiii/lite-agent/cmd/flags"
 )
 
 var flags = pkg_flags.GlobalConfig

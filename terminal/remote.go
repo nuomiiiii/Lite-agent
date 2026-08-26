@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/komari-monitor/komari-agent/hostguard"
+	"github.com/nuomiiiii/lite-agent/hostguard"
 )
 
 type remoteWriter struct {

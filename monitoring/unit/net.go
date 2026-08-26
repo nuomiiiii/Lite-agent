@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari-agent/monitoring/netstatic"
-	"github.com/komari-monitor/komari-agent/runtimeconfig"
-	"github.com/komari-monitor/komari-agent/utils"
+	"github.com/nuomiiiii/lite-agent/monitoring/netstatic"
+	"github.com/nuomiiiii/lite-agent/runtimeconfig"
+	"github.com/nuomiiiii/lite-agent/utils"
 	"github.com/shirou/gopsutil/v4/net"
 )
 

@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
-	"github.com/komari-monitor/komari-agent/runtimeconfig"
+	pkg_flags "github.com/nuomiiiii/lite-agent/cmd/flags"
+	"github.com/nuomiiiii/lite-agent/runtimeconfig"
 	"github.com/shirou/gopsutil/v4/mem"
 )
 

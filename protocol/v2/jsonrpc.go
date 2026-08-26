@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	v1 "github.com/komari-monitor/komari-agent/protocol/v1"
+	v1 "github.com/nuomiiiii/lite-agent/protocol/v1"
 )
 
 const (

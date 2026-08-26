@@ -9,6 +9,22 @@ func TestWebSocketHeartbeatKeepsAliveWithoutProbeTasks(t *testing.T) {
 	if websocketHeartbeatInterval != 30*time.Second {
 		t.Fatalf("heartbeat = %v, want 30s protocol ping independent of panel probes", websocketHeartbeatInterval)
 	}
+	if websocketPongWait != 60*time.Second {
+		t.Fatalf("pong wait = %v, want 60s to match server idle", websocketPongWait)
+	}
+	if websocketHandshakeAliveWait != 10*time.Second {
+		t.Fatalf("handshake alive wait = %v, want 10s", websocketHandshakeAliveWait)
+	}
+	if websocketReconnectDelay < time.Second || websocketReconnectDelay > 2*time.Second {
+		t.Fatalf("reconnect delay = %v, want 1s to 2s", websocketReconnectDelay)
+	}
+	if websocketHeartbeatInterval >= websocketPongWait {
+		t.Fatalf("heartbeat %v must stay below pong wait %v", websocketHeartbeatInterval, websocketPongWait)
+	}
+	if websocketHandshakeAliveWait >= websocketPongWait {
+		t.Fatalf("handshake wait %v must stay below pong wait %v", websocketHandshakeAliveWait, websocketPongWait)
+	}
+
 	idle := 60 * time.Second
 	if websocketHeartbeatInterval >= idle {
 		t.Fatalf("heartbeat %v must stay below server idle %v", websocketHeartbeatInterval, idle)

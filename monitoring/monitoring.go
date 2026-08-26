@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	unit "github.com/komari-monitor/komari-agent/monitoring/unit"
-	"github.com/komari-monitor/komari-agent/runtimeconfig"
+	unit "github.com/nuomiiiii/lite-agent/monitoring/unit"
+	"github.com/nuomiiiii/lite-agent/runtimeconfig"
 )
 
 type report struct {

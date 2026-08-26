@@ -6,10 +6,10 @@ import (
 	"log"
 	"strings"
 
-	"github.com/komari-monitor/komari-agent/monitoring/netstatic"
-	monitoring "github.com/komari-monitor/komari-agent/monitoring/unit"
-	v2 "github.com/komari-monitor/komari-agent/protocol/v2"
-	"github.com/komari-monitor/komari-agent/runtimeconfig"
+	"github.com/nuomiiiii/lite-agent/monitoring/netstatic"
+	monitoring "github.com/nuomiiiii/lite-agent/monitoring/unit"
+	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
+	"github.com/nuomiiiii/lite-agent/runtimeconfig"
 )
 
 type runtimeConfigEnvelope struct {

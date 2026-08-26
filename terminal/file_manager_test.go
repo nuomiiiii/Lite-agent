@@ -57,7 +57,7 @@ func uploadIDFromResponse(t *testing.T, response map[string]any) string {
 
 func TestSQLiteFilesUseNormalFileOperations(t *testing.T) {
 	directory := t.TempDir()
-	database := filepath.Join(directory, "komari.db")
+	database := filepath.Join(directory, "lite.db")
 	payload := append([]byte("SQLite format 3\x00"), make([]byte, 32)...)
 	if err := os.WriteFile(database, payload, 0o600); err != nil {
 		t.Fatal(err)
@@ -252,7 +252,7 @@ func TestOverwriteUploadReplacesRegularFile(t *testing.T) {
 	if string(actual) != string(payload) {
 		t.Fatalf("overwritten content = %q, want %q", actual, payload)
 	}
-	backups, err := filepath.Glob(filepath.Join(filepath.Dir(target), ".komari-backup-*"))
+	backups, err := filepath.Glob(filepath.Join(filepath.Dir(target), ".lite-backup-*"))
 	if err != nil {
 		t.Fatal(err)
 	}

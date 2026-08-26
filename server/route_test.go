@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	v2 "github.com/komari-monitor/komari-agent/protocol/v2"
+	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
 )
 
 func TestResolveRouteTargetLiteralAddress(t *testing.T) {

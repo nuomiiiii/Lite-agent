@@ -20,12 +20,12 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// WarnKomariRunning
+// WarnLiteRunning
 // 作为 SYSTEM（Session 0）运行时：
 // 1) 轮询已登录的交互会话（WTSActive）
 // 2) 对新检测到的会话，以该用户身份在其会话内启动当前进程（追加 --show-warning 参数）
 // 3) 用户态子进程会进入 ShowToast() 分支并发送 Toast
-func WarnKomariRunning() {
+func WarnLiteRunning() {
 
 	// 启用权限
 	if err := enablePrivileges([]string{"SeAssignPrimaryTokenPrivilege", "SeIncreaseQuotaPrivilege"}); err != nil {
@@ -87,11 +87,11 @@ func WarnKomariRunning() {
 
 // ShowToast 在用户态中执行
 func ShowToast() {
-	title := "Komari is Running"
-	message := "The remote control software \"Komari\" is running, which allows others to control your computer. If this was not initiated by you, please terminate the program immediately."
+	title := "Lite is Running"
+	message := "The remote control software \"Lite\" is running, which allows others to control your computer. If this was not initiated by you, please terminate the program immediately."
 
-	const aumid = "Komari.Monitor.Agent"
-	const linkName = "Komari Warning (Auto Delete Later)"
+	const aumid = "Lite.Monitor.Agent"
+	const linkName = "Lite Warning (Auto Delete Later)"
 
 	if err := ensureStartMenuShortcut(aumid, linkName); err != nil {
 		log.Printf("[warn] ensureStartMenuShortcut failed: %v", err)
@@ -165,7 +165,7 @@ func ensureStartMenuShortcut(aumid, linkName string) error {
 	if _, err = oleutil.PutProperty(shortcut, "WorkingDirectory", exeDir); err != nil {
 		return fmt.Errorf("set WorkingDirectory: %w", err)
 	}
-	_, _ = oleutil.PutProperty(shortcut, "Description", "Komari Agent")
+	_, _ = oleutil.PutProperty(shortcut, "Description", "Lite Agent")
 	// 设置 AUMID
 	if _, err = oleutil.PutProperty(shortcut, "AppUserModelID", aumid); err != nil {
 		// 某些系统该属性不存在时，依然尝试保存；Toast 可能仍然显示

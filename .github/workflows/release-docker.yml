@@ -45,13 +45,13 @@ jobs:
         run: |
           VERSION="${RELEASE_VERSION}"
           INTERNAL_VERSION="${VERSION}+${GITHUB_SHA::7}"
-          LDFLAGS="-X github.com/komari-monitor/komari-agent/update.CurrentVersion=${INTERNAL_VERSION} -X github.com/komari-monitor/komari-agent/update.Repo=${{ github.repository }}"
+          LDFLAGS="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${INTERNAL_VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}"
 
           echo "Building for linux/amd64..."
-          GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o komari-agent-linux-amd64
+          GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o Lite-agent-linux-amd64
 
           echo "Building for linux/arm64..."
-          GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o komari-agent-linux-arm64
+          GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o Lite-agent-linux-arm64
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

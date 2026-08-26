@@ -7,8 +7,8 @@ import (
 )
 
 func TestDefaultUpdateRepo(t *testing.T) {
-	if Repo != "nuomiiiii/komari-agent" {
-		t.Fatalf("Repo = %q, want %q", Repo, "nuomiiiii/komari-agent")
+	if Repo != "nuomiiiii/Lite-agent" {
+		t.Fatalf("Repo = %q, want %q", Repo, "nuomiiiii/Lite-agent")
 	}
 }
 
@@ -82,6 +82,8 @@ func TestNeedUpdate(t *testing.T) {
 		{"2.2.0.1+b14011e", "2.2.0.2", true},
 		{"2.2.0.2+deadbee", "2.2.0.2", false},
 		{"2.2.0.2", "2.2.0.1", false},
+		{"2.2.0.2", "2.3.0.0", true},
+		{"2.3.0.0+abc1234", "2.3.0.0", false},
 	}
 
 	for _, tt := range tests {
@@ -130,9 +132,9 @@ func TestExpectedAssetName(t *testing.T) {
 		goarch string
 		want   string
 	}{
-		{"linux", "amd64", "komari-agent-linux-amd64"},
-		{"darwin", "arm64", "komari-agent-darwin-arm64"},
-		{"windows", "amd64", "komari-agent-windows-amd64.exe"},
+		{"linux", "amd64", "Lite-agent-linux-amd64"},
+		{"darwin", "arm64", "Lite-agent-darwin-arm64"},
+		{"windows", "amd64", "Lite-agent-windows-amd64.exe"},
 	}
 
 	for _, tt := range tests {
@@ -143,15 +145,33 @@ func TestExpectedAssetName(t *testing.T) {
 	}
 }
 
+func TestFindReleaseAssetUsesLiteAgentName(t *testing.T) {
+	release := testRelease("2.3.0.0", false, false, time.Now(), "Lite-agent-linux-amd64")
+	asset, ok := findReleaseAsset(release, expectedAssetNames("linux", "amd64")...)
+	if !ok {
+		t.Fatal("findReleaseAsset() found no candidate")
+	}
+	if asset.Name != "Lite-agent-linux-amd64" {
+		t.Fatalf("findReleaseAsset() = %q, want Lite-agent-linux-amd64", asset.Name)
+	}
+}
+
+func TestFindReleaseAssetIgnoresKomariAgentName(t *testing.T) {
+	release := testRelease("2.3.0.0", false, false, time.Now(), "komari-agent-linux-amd64")
+	if _, ok := findReleaseAsset(release, expectedAssetNames("linux", "amd64")...); ok {
+		t.Fatal("findReleaseAsset() should not accept komari-agent assets")
+	}
+}
+
 func TestSelectLatestSnapshotRelease(t *testing.T) {
-	assetName := "komari-agent-linux-amd64"
+	assetName := "Lite-agent-linux-amd64"
 	base := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
 
 	releases := []githubRelease{
 		testRelease("v9.9.9", false, false, base.Add(5*time.Hour), assetName),
 		testRelease("Snapshot-2607061400", true, true, base.Add(4*time.Hour), assetName),
 		testRelease("beta-2607061500", true, false, base.Add(6*time.Hour), assetName),
-		testRelease("Snapshot-2607061600", true, false, base.Add(7*time.Hour), "komari-agent-linux-arm64"),
+		testRelease("Snapshot-2607061600", true, false, base.Add(7*time.Hour), "Lite-agent-linux-arm64"),
 		testRelease("Snapshot-2607061200", true, false, base, assetName),
 		testRelease("Snapshot-2607061300", true, false, base.Add(time.Hour), assetName),
 	}
@@ -169,7 +189,7 @@ func TestSelectLatestSnapshotRelease(t *testing.T) {
 }
 
 func TestSelectLatestSnapshotReleaseTieBreaksByTag(t *testing.T) {
-	assetName := "komari-agent-linux-amd64"
+	assetName := "Lite-agent-linux-amd64"
 	publishedAt := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
 
 	releases := []githubRelease{
@@ -188,18 +208,18 @@ func TestSelectLatestSnapshotReleaseTieBreaksByTag(t *testing.T) {
 
 func TestSelectLatestSnapshotReleaseNoMatch(t *testing.T) {
 	releases := []githubRelease{
-		testRelease("v1.2.3", false, false, time.Now(), "komari-agent-linux-amd64"),
-		testRelease("Snapshot-2607061200", true, true, time.Now(), "komari-agent-linux-amd64"),
-		testRelease("Snapshot-2607061300", true, false, time.Now(), "komari-agent-linux-arm64"),
+		testRelease("v1.2.3", false, false, time.Now(), "Lite-agent-linux-amd64"),
+		testRelease("Snapshot-2607061200", true, true, time.Now(), "Lite-agent-linux-amd64"),
+		testRelease("Snapshot-2607061300", true, false, time.Now(), "Lite-agent-linux-arm64"),
 	}
 
-	if got, ok := selectLatestSnapshotRelease(releases, "komari-agent-linux-amd64"); ok {
+	if got, ok := selectLatestSnapshotRelease(releases, "Lite-agent-linux-amd64"); ok {
 		t.Fatalf("selectLatestSnapshotRelease() = %+v, want no candidate", got)
 	}
 }
 
 func TestSelectLatestStableRelease(t *testing.T) {
-	assetName := "komari-agent-linux-amd64"
+	assetName := "Lite-agent-linux-amd64"
 	base := time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC)
 	releases := []githubRelease{
 		testRelease("2.1.6", false, false, base, assetName),
@@ -222,11 +242,11 @@ func TestSelectLatestStableRelease(t *testing.T) {
 }
 
 func TestSelectLatestStableReleaseWaitsForNewestAsset(t *testing.T) {
-	assetName := "komari-agent-linux-amd64"
+	assetName := "Lite-agent-linux-amd64"
 	base := time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC)
 	releases := []githubRelease{
 		testRelease("2.1.6", false, false, base, assetName),
-		testRelease("2.1.61", false, false, base.Add(time.Hour), "komari-agent-linux-arm64"),
+		testRelease("2.1.61", false, false, base.Add(time.Hour), "Lite-agent-linux-arm64"),
 	}
 
 	got, ok := selectLatestStableRelease(releases, assetName)
@@ -238,8 +258,8 @@ func TestSelectLatestStableReleaseWaitsForNewestAsset(t *testing.T) {
 	}
 }
 
-func TestSelectLatestStableReleaseUsesKomariRevisionOrder(t *testing.T) {
-	assetName := "komari-agent-linux-amd64"
+func TestSelectLatestStableReleaseUsesRevisionOrder(t *testing.T) {
+	assetName := "Lite-agent-linux-amd64"
 	base := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
 	releases := []githubRelease{
 		testRelease("2.1.62", false, false, base.Add(3*time.Hour), assetName),
@@ -258,7 +278,7 @@ func TestSelectLatestStableReleaseUsesKomariRevisionOrder(t *testing.T) {
 }
 
 func TestSelectLatestStableReleaseSupportsFourPartVersions(t *testing.T) {
-	assetName := "komari-agent-linux-amd64"
+	assetName := "Lite-agent-linux-amd64"
 	base := time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC)
 	releases := []githubRelease{
 		testRelease("2.1.11", false, false, base.Add(4*time.Hour), assetName),

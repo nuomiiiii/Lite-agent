@@ -36,10 +36,14 @@ log_config() {
 }
 
 # Default values
-service_name="komari-agent"
-target_dir="/opt/komari"
+service_name="lite-agent"
+target_dir="/opt/lite-agent"
 github_proxy=""
 install_version="" # New parameter for specifying version
+legacy_service_name="komari-agent"
+github_repo="nuomiiiii/Lite-agent"
+custom_layout=false
+
  
 
 # Detect OS
@@ -47,10 +51,10 @@ os_type=$(uname -s)
 case $os_type in
     Darwin)
         os_name="darwin"
-        target_dir="/usr/local/komari"  # Use /usr/local on macOS
+        target_dir="/usr/local/lite-agent"  # Use /usr/local on macOS
         # Check if we can write to /usr/local, fallback to user directory
         if [ ! -w "/usr/local" ] && [ "$EUID" -ne 0 ]; then
-            target_dir="$HOME/.komari"
+            target_dir="$HOME/.lite-agent"
             log_info "No write permission to /usr/local, using user directory: $target_dir"
         fi
         ;;
@@ -62,7 +66,7 @@ case $os_type in
         ;;
     MINGW*|MSYS*|CYGWIN*)
         os_name="windows"
-        target_dir="/c/komari"  # Use C:\komari on Windows
+        target_dir="/c/lite-agent"  # Use C:\lite-agent on Windows
         ;;
     *)
         log_error "Unsupported operating system: $os_type"
@@ -71,15 +75,17 @@ case $os_type in
 esac
 
 # Parse install-specific arguments
-komari_args=""
+agent_args=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --install-dir)
             target_dir="$2"
+            custom_layout=true
             shift 2
             ;;
         --install-service-name)
             service_name="$2"
+            custom_layout=true
             shift 2
             ;;
         --install-ghproxy)
@@ -95,19 +101,17 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
-            # Non-install arguments go to komari_args
-            komari_args="$komari_args $1"
+            # Non-install arguments go to agent_args
+            agent_args="$agent_args $1"
             shift
             ;;
     esac
 done
 
-# Remove leading space from komari_args if present
-komari_args="${komari_args# }"
+# Remove leading space from agent_args if present
+agent_args="${agent_args# }"
 
-komari_agent_path="${target_dir}/agent"
-
-# macOS doesn't always require sudo for everything
+agent_path="${target_dir}/Lite-agent"
 if [ "$os_name" = "darwin" ] && command -v brew >/dev/null 2>&1; then
     # On macOS with Homebrew, we can run without root for dependencies
     require_root_for_deps=false
@@ -121,14 +125,15 @@ if [ "$EUID" -ne 0 ] && [ "$require_root_for_deps" = true ]; then
 fi
 
 echo -e "${WHITE}===========================================${NC}"
-echo -e "${WHITE}    Komari Agent Installation Script     ${NC}"
+echo -e "${WHITE}    Lite Agent Installation Script     ${NC}"
 echo -e "${WHITE}===========================================${NC}"
 echo ""
 log_config "Installation configuration:"
 log_config "  Service name: ${GREEN}$service_name${NC}"
 log_config "  Install directory: ${GREEN}$target_dir${NC}"
 log_config "  GitHub proxy: ${GREEN}${github_proxy:-"(direct)"}${NC}"
-log_config "  Binary arguments: ${GREEN}$komari_args${NC}"
+log_config "  Binary: ${GREEN}$agent_path${NC}"
+log_config "  Binary arguments: ${GREEN}$agent_args${NC}"
 if [ -n "$install_version" ]; then
     log_config "  Specified agent version: ${GREEN}$install_version${NC}"
 else
@@ -137,57 +142,130 @@ fi
 echo ""
 
 # Function to uninstall the previous installation
-uninstall_previous() {
-    log_step "Checking for previous installation..."
-    
-    # Stop and disable service if it exists
-    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q "${service_name}.service"; then
-        log_info "Stopping and disabling existing systemd service..."
-        systemctl stop ${service_name}.service
-        systemctl disable ${service_name}.service
-        rm -f "/etc/systemd/system/${service_name}.service"
+uninstall_named_service() {
+    local name="$1"
+    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q "${name}.service"; then
+        log_info "Stopping and disabling existing systemd service ${name}..."
+        systemctl stop ${name}.service
+        systemctl disable ${name}.service
+        rm -f "/etc/systemd/system/${name}.service"
         systemctl daemon-reload
-    elif command -v rc-service >/dev/null 2>&1 && [ -f "/etc/init.d/${service_name}" ]; then
-        log_info "Stopping and disabling existing OpenRC service..."
-        rc-service ${service_name} stop
-        rc-update del ${service_name} default
-        rm -f "/etc/init.d/${service_name}"
-    elif command -v uci >/dev/null 2>&1 && [ -f "/etc/init.d/${service_name}" ]; then
-        log_info "Stopping and disabling existing procd service..."
-        /etc/init.d/${service_name} stop
-        /etc/init.d/${service_name} disable
-        rm -f "/etc/init.d/${service_name}"
-    elif command -v initctl >/dev/null 2>&1 && [ -f "/etc/init/${service_name}.conf" ]; then
-        log_info "Stopping and removing existing upstart service..."
-        initctl stop ${service_name}
-        rm -f "/etc/init/${service_name}.conf"
+    elif command -v rc-service >/dev/null 2>&1 && [ -f "/etc/init.d/${name}" ]; then
+        log_info "Stopping and disabling existing OpenRC service ${name}..."
+        rc-service ${name} stop
+        rc-update del ${name} default
+        rm -f "/etc/init.d/${name}"
+    elif command -v uci >/dev/null 2>&1 && [ -f "/etc/init.d/${name}" ]; then
+        log_info "Stopping and disabling existing procd service ${name}..."
+        /etc/init.d/${name} stop
+        /etc/init.d/${name} disable
+        rm -f "/etc/init.d/${name}"
+    elif command -v initctl >/dev/null 2>&1 && [ -f "/etc/init/${name}.conf" ]; then
+        log_info "Stopping and removing existing upstart service ${name}..."
+        initctl stop ${name}
+        rm -f "/etc/init/${name}.conf"
     elif [ "$os_name" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
-        # macOS launchd service - check both system and user locations
-        system_plist="/Library/LaunchDaemons/com.komari.${service_name}.plist"
-        user_plist="$HOME/Library/LaunchAgents/com.komari.${service_name}.plist"
-        
-        if [ -f "$system_plist" ]; then
-            log_info "Stopping and removing existing system launchd service..."
-            launchctl bootout system "$system_plist" 2>/dev/null || true
-            rm -f "$system_plist"
-        fi
-        
-        if [ -f "$user_plist" ]; then
-            log_info "Stopping and removing existing user launchd service..."
-            launchctl bootout gui/$(id -u) "$user_plist" 2>/dev/null || true
-            rm -f "$user_plist"
-        fi
-    fi
-    
-    # Remove old binary if it exists
-    if [ -f "$komari_agent_path" ]; then
-        log_info "Removing old binary..."
-        rm -f "$komari_agent_path"
+        for prefix in com.lite com.komari; do
+            system_plist="/Library/LaunchDaemons/${prefix}.${name}.plist"
+            user_plist="$HOME/Library/LaunchAgents/${prefix}.${name}.plist"
+            if [ -f "$system_plist" ]; then
+                log_info "Stopping and removing existing system launchd service ${prefix}.${name}..."
+                launchctl bootout system "$system_plist" 2>/dev/null || true
+                rm -f "$system_plist"
+            fi
+            if [ -f "$user_plist" ]; then
+                log_info "Stopping and removing existing user launchd service ${prefix}.${name}..."
+                launchctl bootout gui/$(id -u) "$user_plist" 2>/dev/null || true
+                rm -f "$user_plist"
+            fi
+        done
     fi
 }
 
-# Uninstall previous installation
-uninstall_previous
+copy_sidecars_from() {
+    local src="$1"
+    if [ ! -d "$src" ] || [ "$src" = "$target_dir" ]; then
+        return
+    fi
+    mkdir -p "$target_dir"
+    local name
+    for name in auto-discovery.json net_static.json net_static.json.bak; do
+        if [ -f "$src/$name" ] && [ ! -f "$target_dir/$name" ]; then
+            log_info "Copying $name from $src to $target_dir"
+            cp -a "$src/$name" "$target_dir/$name"
+        fi
+    done
+}
+
+prevent_service_restart() {
+    local name="$1"
+    if command -v systemctl >/dev/null 2>&1 && [ -f "/etc/systemd/system/${name}.service" ]; then
+        mkdir -p "/etc/systemd/system/${name}.service.d"
+        printf '[Service]\nRestart=no\n' > "/etc/systemd/system/${name}.service.d/restart.conf"
+        systemctl daemon-reload
+    fi
+}
+
+new_service_running() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl is-active --quiet "${service_name}.service"
+        return $?
+    fi
+    if command -v rc-service >/dev/null 2>&1; then
+        rc-service "${service_name}" status >/dev/null 2>&1
+        return $?
+    fi
+    if [ -x "/etc/init.d/${service_name}" ]; then
+        "/etc/init.d/${service_name}" status >/dev/null 2>&1
+        return $?
+    fi
+    if [ "$os_name" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
+        launchctl print "system/com.lite.${service_name}" >/dev/null 2>&1 && return 0
+        launchctl print "gui/$(id -u)/com.lite.${service_name}" >/dev/null 2>&1 && return 0
+        return 1
+    fi
+    if command -v initctl >/dev/null 2>&1; then
+        initctl status "${service_name}" 2>/dev/null | grep -q "start/running"
+        return $?
+    fi
+    return 1
+}
+
+wait_new_service() {
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        if new_service_running; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+retire_legacy_service() {
+    if [ "$custom_layout" = true ]; then
+        return
+    fi
+    if [ "$service_name" = "$legacy_service_name" ]; then
+        return
+    fi
+    log_step "Retiring legacy service ${legacy_service_name} after Lite-agent is running..."
+    prevent_service_restart "$legacy_service_name"
+    uninstall_named_service "$legacy_service_name"
+}
+
+# Keep the old komari-agent process running until Lite-agent is up.
+# Custom --install-dir / --install-service-name installs do not migrate default paths.
+if [ "$custom_layout" != true ]; then
+    log_step "Copying sidecar files from the default komari-agent directory..."
+    copy_sidecars_from "/opt/komari"
+    copy_sidecars_from "/usr/local/komari"
+    copy_sidecars_from "$HOME/.komari"
+    copy_sidecars_from "/c/komari"
+else
+    log_step "Custom install layout; leaving komari-agent in place."
+    uninstall_named_service "$service_name"
+fi
 
 install_dependencies() {
     log_step "Checking and installing dependencies..."
@@ -291,40 +369,53 @@ else
 fi
 
 # Construct download URL
-file_name="komari-agent-${os_name}-${arch}"
+file_name="Lite-agent-${os_name}-${arch}"
 if [ "$version_to_install" = "latest" ]; then
     download_path="latest/download"
 else
     download_path="download/${version_to_install}"
 fi
 
-if [ -n "$github_proxy" ]; then
-    # Use proxy for GitHub releases
-    download_url="${github_proxy}/https://github.com/nuomiiiii/komari-agent/releases/${download_path}/${file_name}"
-else
-    # Direct access to GitHub releases
-    download_url="https://github.com/nuomiiiii/komari-agent/releases/${download_path}/${file_name}"
-fi
+build_download_url() {
+    local repo="$1"
+    local name="$2"
+    if [ -n "$github_proxy" ]; then
+        echo "${github_proxy}/https://github.com/${repo}/releases/${download_path}/${name}"
+    else
+        echo "https://github.com/${repo}/releases/${download_path}/${name}"
+    fi
+}
 
 log_step "Creating installation directory: ${GREEN}$target_dir${NC}"
 mkdir -p "$target_dir"
 
-# Download binary
-if [ -n "$github_proxy" ]; then
-    log_step "Downloading $file_name via proxy..."
+download_ok=false
+for candidate in \
+    "${github_repo}|${file_name}"; do
+    repo="${candidate%%|*}"
+    name="${candidate##*|}"
+    download_url="$(build_download_url "$repo" "$name")"
+    if [ -n "$github_proxy" ]; then
+        log_step "Downloading $name via proxy..."
+    else
+        log_step "Downloading $name directly..."
+    fi
     log_info "URL: ${CYAN}$download_url${NC}"
-else
-    log_step "Downloading $file_name directly..."
-    log_info "URL: ${CYAN}$download_url${NC}"
-fi
-if ! curl --fail --show-error -L -o "$komari_agent_path" "$download_url"; then
+    if curl --fail --show-error -L -o "$agent_path" "$download_url"; then
+        download_ok=true
+        break
+    fi
+    log_warning "Download from $repo/$name failed, trying next source..."
+done
+
+if [ "$download_ok" != true ]; then
     log_error "Download failed"
     exit 1
 fi
 
 # Set executable permissions
-chmod +x "$komari_agent_path"
-log_success "Komari-agent installed to ${GREEN}$komari_agent_path${NC}"
+chmod +x "$agent_path"
+log_success "Lite-agent installed to ${GREEN}$agent_path${NC}"
 
 # Detect init system and configure service
 log_step "Configuring system service..."
@@ -427,12 +518,12 @@ if [ "$init_system" = "nixos" ]; then
     log_info "Please add the following to your NixOS configuration:"
     echo ""
     echo -e "${CYAN}systemd.services.${service_name} = {${NC}"
-    echo -e "${CYAN}  description = \"Komari Agent Service\";${NC}"
+    echo -e "${CYAN}  description = \"Lite Agent Service\";${NC}"
     echo -e "${CYAN}  after = [ \"network.target\" ];${NC}"
     echo -e "${CYAN}  wantedBy = [ \"multi-user.target\" ];${NC}"
     echo -e "${CYAN}  serviceConfig = {${NC}"
     echo -e "${CYAN}    Type = \"simple\";${NC}"
-    echo -e "${CYAN}    ExecStart = \"${komari_agent_path} ${komari_args}\";${NC}"
+    echo -e "${CYAN}    ExecStart = \"${agent_path} ${agent_args}\";${NC}"
     echo -e "${CYAN}    WorkingDirectory = \"${target_dir}\";${NC}"
     echo -e "${CYAN}    Restart = \"always\";${NC}"
     echo -e "${CYAN}    User = \"root\";${NC}"
@@ -448,10 +539,10 @@ elif [ "$init_system" = "openrc" ]; then
     cat > "$service_file" << EOF
 #!/sbin/openrc-run
 
-name="Komari Agent Service"
-description="Komari monitoring agent"
-command="${komari_agent_path}"
-command_args="${komari_args}"
+name="Lite Agent Service"
+description="Lite monitoring agent"
+command="${agent_path}"
+command_args="${agent_args}"
 command_user="root"
 directory="${target_dir}"
 pidfile="/run/${service_name}.pid"
@@ -467,7 +558,7 @@ EOF
     # Set permissions and enable service
     chmod +x "$service_file"
     rc-update add ${service_name} default
-    rc-service ${service_name} start
+    rc-service ${service_name} restart || rc-service ${service_name} start
     log_success "OpenRC service configured and started"
 elif [ "$init_system" = "systemd" ]; then
     # Systemd service configuration
@@ -475,12 +566,12 @@ elif [ "$init_system" = "systemd" ]; then
     service_file="/etc/systemd/system/${service_name}.service"
     cat > "$service_file" << EOF
 [Unit]
-Description=Komari Agent Service
+Description=Lite Agent Service
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=${komari_agent_path} ${komari_args}
+ExecStart=${agent_path} ${agent_args}
 WorkingDirectory=${target_dir}
 Restart=always
 User=root
@@ -492,7 +583,7 @@ EOF
     # Reload systemd and start service
     systemctl daemon-reload
     systemctl enable ${service_name}.service
-    systemctl start ${service_name}.service
+    systemctl restart ${service_name}.service
     log_success "Systemd service configured and started"
 elif [ "$init_system" = "procd" ]; then
     # procd service configuration (OpenWrt)
@@ -506,8 +597,8 @@ STOP=10
 
 USE_PROCD=1
 
-PROG="${komari_agent_path}"
-ARGS="${komari_args}"
+PROG="${agent_path}"
+ARGS="${agent_args}"
 
 start_service() {
     procd_open_instance
@@ -532,7 +623,7 @@ EOF
     # Set permissions and enable service
     chmod +x "$service_file"
     /etc/init.d/${service_name} enable
-    /etc/init.d/${service_name} start
+    /etc/init.d/${service_name} restart || /etc/init.d/${service_name} start
     log_success "procd service configured and started"
 elif [ "$init_system" = "launchd" ]; then
     # macOS launchd service configuration
@@ -542,7 +633,7 @@ elif [ "$init_system" = "launchd" ]; then
     if [[ "$target_dir" =~ ^/Users/.* ]] || [ "$EUID" -ne 0 ]; then
         # User-level service (LaunchAgent)
         plist_dir="$HOME/Library/LaunchAgents"
-        plist_file="$plist_dir/com.komari.${service_name}.plist"
+        plist_file="$plist_dir/com.lite.${service_name}.plist"
         log_info "Installing as user-level service (LaunchAgent)"
         mkdir -p "$plist_dir"
         service_user="$(whoami)"
@@ -550,7 +641,7 @@ elif [ "$init_system" = "launchd" ]; then
     else
         # System-level service (LaunchDaemon)
         plist_dir="/Library/LaunchDaemons"
-        plist_file="$plist_dir/com.komari.${service_name}.plist"
+        plist_file="$plist_dir/com.lite.${service_name}.plist"
         log_info "Installing as system-level service (LaunchDaemon)"
         service_user="root"
         log_dir="/var/log"
@@ -563,15 +654,15 @@ elif [ "$init_system" = "launchd" ]; then
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.komari.${service_name}</string>
+    <string>com.lite.${service_name}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${komari_agent_path}</string>
+        <string>${agent_path}</string>
 EOF
     
     # Add program arguments if provided
-    if [ -n "$komari_args" ]; then
-        echo "$komari_args" | xargs -n1 printf "        <string>%s</string>\n" >> "$plist_file"
+    if [ -n "$agent_args" ]; then
+        echo "$agent_args" | xargs -n1 printf "        <string>%s</string>\n" >> "$plist_file"
     fi
     
     cat >> "$plist_file" << EOF
@@ -594,7 +685,7 @@ EOF
     
     # Load and start the service
     if [[ "$target_dir" =~ ^/Users/.* ]] || [ "$EUID" -ne 0 ]; then
-        # User-level service
+        launchctl bootout gui/$(id -u) "$plist_file" 2>/dev/null || true
         if launchctl bootstrap gui/$(id -u) "$plist_file"; then
             log_success "User-level launchd service configured and started"
         else
@@ -602,7 +693,7 @@ EOF
             exit 1
         fi
     else
-        # System-level service
+        launchctl bootout system "$plist_file" 2>/dev/null || true
         if launchctl bootstrap system "$plist_file"; then
             log_success "System-level launchd service configured and started"
         else
@@ -615,8 +706,8 @@ elif [ "$init_system" = "upstart" ]; then
     log_info "Using upstart for service management"
     service_file="/etc/init/${service_name}.conf"
     cat > "$service_file" << EOF
-# KOMARI Agent
-description "Komari Agent Service"
+# Lite Agent
+description "Lite Agent Service"
 
 chdir ${target_dir}
 start on filesystem or runlevel [2345]
@@ -629,17 +720,17 @@ umask 022
 console none
 
 pre-start script
-    test -x ${komari_agent_path} || { stop; exit 0; }
+    test -x ${agent_path} || { stop; exit 0; }
 end script
 
 # Start
 script
-    exec ${komari_agent_path} ${komari_args}
+    exec ${agent_path} ${agent_args}
 end script
 EOF
     # enable Upstart unit
     initctl reload-configuration
-    initctl start ${service_name}
+    initctl restart ${service_name} 2>/dev/null || initctl start ${service_name}
     log_success "Upstart service configured and started"
 else
     log_error "Unsupported or unknown init system detected: $init_system"
@@ -647,15 +738,24 @@ else
     exit 1
 fi
 
+if [ "$init_system" != "nixos" ]; then
+    if ! wait_new_service; then
+        log_error "Lite-agent service ${service_name} did not become running; leaving komari-agent in place"
+        exit 1
+    fi
+    retire_legacy_service
+fi
+
 echo ""
 echo -e "${WHITE}===========================================${NC}"
 if [ -f /etc/NIXOS ]; then
-    log_success "Komari-agent binary installed!"
+    log_success "Lite-agent binary installed!"
     log_warning "NixOS requires declarative service configuration."
     log_info "Please add the service configuration to your NixOS config and rebuild."
 else
-    log_success "Komari-agent installation completed!"
+    log_success "Lite-agent installation completed!"
 fi
 log_config "Service: ${GREEN}$service_name${NC}"
-log_config "Arguments: ${GREEN}$komari_args${NC}"
+log_config "Process: ${GREEN}$agent_path${NC}"
+log_config "Arguments: ${GREEN}$agent_args${NC}"
 echo -e "${WHITE}===========================================${NC}"

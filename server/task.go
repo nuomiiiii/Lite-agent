@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari-agent/dnsresolver"
-	"github.com/komari-monitor/komari-agent/hostguard"
-	v2 "github.com/komari-monitor/komari-agent/protocol/v2"
-	"github.com/komari-monitor/komari-agent/ws"
+	"github.com/nuomiiiii/lite-agent/dnsresolver"
+	"github.com/nuomiiiii/lite-agent/hostguard"
+	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
+	"github.com/nuomiiiii/lite-agent/ws"
 	ping "github.com/prometheus-community/pro-bing"
 )
 

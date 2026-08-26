@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	v2 "github.com/komari-monitor/komari-agent/protocol/v2"
+	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
 )
 
 func configureAccessTest(t *testing.T, endpoint, clientID, clientSecret string) {
@@ -68,12 +68,16 @@ func TestRemoteHeadersPreserveAllAuthenticationLayers(t *testing.T) {
 	configureAccessTest(t, "", "access-id", "access-secret")
 
 	terminalHeaders := terminalAuthorizationHeader("agent-token", "terminal-session")
-	if terminalHeaders.Get("X-Komari-Terminal-Session") != "terminal-session" || !headersContainAccessCredentials(terminalHeaders) {
+	if terminalHeaders.Get("X-Komari-Terminal-Session") != "terminal-session" ||
+		terminalHeaders.Get("X-Lite-Terminal-Session") != "terminal-session" ||
+		!headersContainAccessCredentials(terminalHeaders) {
 		t.Fatalf("terminal headers are incomplete: %#v", terminalHeaders)
 	}
 	remoteHeaders := remoteAuthorizationHeader("agent-token", "remote-session", "remote-ticket")
 	if remoteHeaders.Get("X-Komari-Remote-Session") != "remote-session" ||
 		remoteHeaders.Get("X-Komari-Remote-Ticket") != "remote-ticket" ||
+		remoteHeaders.Get("X-Lite-Remote-Session") != "remote-session" ||
+		remoteHeaders.Get("X-Lite-Remote-Ticket") != "remote-ticket" ||
 		!headersContainAccessCredentials(remoteHeaders) {
 		t.Fatalf("remote headers are incomplete: %#v", remoteHeaders)
 	}

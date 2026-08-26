@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/komari-monitor/komari-agent/dnsresolver"
-	"github.com/komari-monitor/komari-agent/requestheaders"
-	"github.com/komari-monitor/komari-agent/utils"
+	"github.com/nuomiiiii/lite-agent/dnsresolver"
+	"github.com/nuomiiiii/lite-agent/requestheaders"
+	"github.com/nuomiiiii/lite-agent/utils"
 )
 
 // AutoDiscoveryConfig 自动发现配置结构体

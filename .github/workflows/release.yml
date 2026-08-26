@@ -52,21 +52,21 @@ jobs:
           VERSION: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           INTERNAL_VERSION="${VERSION}+${GITHUB_SHA::7}"
-          BINARY_NAME=komari-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          BINARY_NAME=Lite-agent-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME=${BINARY_NAME}.exe
           elif [ "${{ matrix.goos }}" = "darwin" ]; then
             # macOS binaries typically do not have a file extension
             true
           fi
-          go build -trimpath -ldflags="-X github.com/komari-monitor/komari-agent/update.CurrentVersion=${INTERNAL_VERSION} -X github.com/komari-monitor/komari-agent/update.Repo=${{ github.repository }}" -o "$BINARY_NAME"
+          go build -trimpath -ldflags="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${INTERNAL_VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}" -o "$BINARY_NAME"
 
       - name: Upload binary to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          BINARY_NAME=komari-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          BINARY_NAME=Lite-agent-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME=${BINARY_NAME}.exe
           elif [ "${{ matrix.goos }}" = "darwin" ]; then

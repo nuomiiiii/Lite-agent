@@ -40,14 +40,14 @@ jobs:
           CGO_ENABLED: 0
         run: |
           VERSION="0.0.0+${GITHUB_SHA::7}"
-          BINARY_NAME=komari-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          BINARY_NAME=Lite-agent-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME=${BINARY_NAME}.exe
           fi
-          go build -trimpath -ldflags="-X github.com/komari-monitor/komari-agent/update.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari-agent/update.Repo=${{ github.repository }}" -o $BINARY_NAME
+          go build -trimpath -ldflags="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}" -o $BINARY_NAME
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: komari-agent-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: komari-agent-${{ matrix.goos }}-${{ matrix.goarch }}*
+          name: Lite-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: Lite-agent-${{ matrix.goos }}-${{ matrix.goarch }}*

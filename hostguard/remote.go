@@ -33,7 +33,7 @@ type dockerProcess struct {
 }
 
 // serverHostDetector is kept injectable so the ordering of the protection
-// rules can be tested without needing a real Komari process or Docker daemon.
+// rules can be tested without needing a real panel process or Docker daemon.
 var serverHostDetector = func() bool {
 	return hasKomariServerProcess() || hasKomariDockerContainer()
 }
@@ -56,7 +56,7 @@ func RemoteControlBlockedReason(endpoint string) string {
 }
 
 // SetReportedAddresses records the public or interface addresses that the Agent
-// reports to Komari. This also covers NAT and container setups where a Server's
+// reports to Lite. This also covers NAT and container setups where a Server's
 // public address is not assigned directly to an Agent-visible interface.
 func SetReportedAddresses(addresses ...string) {
 	normalized := make(map[string]struct{}, len(addresses))
@@ -81,17 +81,17 @@ func SetReportedAddresses(addresses ...string) {
 }
 
 func detectKomariServer(endpoint string) string {
-	// A node that hosts the Komari Server is an intentional remote-management
+	// A node that hosts the Lite Server is an intentional remote-management
 	// target. Do this check before endpoint/address matching because the Server
 	// endpoint necessarily resolves back to the same node in this deployment.
 	if serverHostDetector() {
 		return ""
 	}
 	if endpointTargetsLocalAddress(endpoint) {
-		return "Remote control is disabled because the Komari Server endpoint resolves to this node"
+		return "Remote control is disabled because the Lite Server endpoint resolves to this node"
 	}
 	if endpointTargetsReportedAddress(endpoint, detectionCache.reportedAddresses) {
-		return "Remote control is disabled because the Komari Server endpoint matches this node's reported address"
+		return "Remote control is disabled because the Lite Server endpoint matches this node's reported address"
 	}
 	return ""
 }
@@ -182,7 +182,7 @@ func hasKomariServerProcess() bool {
 
 func isKomariServerProcess(value string) bool {
 	name := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".exe")
-	return name == "komari" || name == "komari-server"
+	return name == "lite" || name == "lite-server" || name == "komari" || name == "komari-server"
 }
 
 func hasKomariDockerContainer() bool {
@@ -210,7 +210,8 @@ func isKomariServerContainer(container dockerProcess) bool {
 	image := strings.ToLower(strings.TrimSpace(container.Image))
 	name := strings.ToLower(strings.TrimSpace(container.Names))
 	command := strings.ToLower(strings.TrimSpace(container.Command))
-	if strings.Contains(image, "komari-agent") || strings.Contains(name, "komari-agent") {
+	if strings.Contains(image, "komari-agent") || strings.Contains(name, "komari-agent") ||
+		strings.Contains(image, "lite-agent") || strings.Contains(name, "lite-agent") {
 		return false
 	}
 	if digest := strings.IndexByte(image, '@'); digest >= 0 {
@@ -219,7 +220,10 @@ func isKomariServerContainer(container dockerProcess) bool {
 	if slash, colon := strings.LastIndexByte(image, '/'), strings.LastIndexByte(image, ':'); colon > slash {
 		image = image[:colon]
 	}
-	return image == "komari" || strings.HasSuffix(image, "/komari") ||
+	return image == "lite" || strings.HasSuffix(image, "/lite") ||
+		name == "lite" || strings.HasPrefix(name, "lite-server") ||
+		image == "komari" || strings.HasSuffix(image, "/komari") ||
 		name == "komari" || strings.HasPrefix(name, "komari-server") ||
+		(strings.Contains(command, "lite.exe") && !strings.Contains(command, "lite-agent")) ||
 		(strings.Contains(command, "komari") && !strings.Contains(command, "komari-agent"))
 }

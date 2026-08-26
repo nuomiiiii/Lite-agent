@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	v2 "github.com/komari-monitor/komari-agent/protocol/v2"
-	"github.com/komari-monitor/komari-agent/ws"
+	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
+	"github.com/nuomiiiii/lite-agent/ws"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"

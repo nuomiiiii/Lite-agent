@@ -32,13 +32,13 @@ for GOOS in "${OS_LIST[@]}"; do
     echo -e "Building for $GOOS/$GOARCH..."
 
     # 设置输出二进制文件名
-    BINARY_NAME="komari-agent-${GOOS}-${GOARCH}"
+    BINARY_NAME="Lite-agent-${GOOS}-${GOARCH}"
     if [ "$GOOS" = "windows" ]; then
       BINARY_NAME="${BINARY_NAME}.exe"
     fi
 
     # 构建二进制文件
-    env GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=0 go build -trimpath -ldflags="-X github.com/komari-monitor/komari-agent/update.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari-agent/update.Repo=nuomiiiii/komari-agent" -o "./build/$BINARY_NAME"
+    env GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=0 go build -trimpath -ldflags="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=nuomiiiii/Lite-agent" -o "./build/$BINARY_NAME"
 
     if [ $? -ne 0 ]; then
       echo -e "${RED}Failed to build for $GOOS/$GOARCH${NC}"

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
+	pkg_flags "github.com/nuomiiiii/lite-agent/cmd/flags"
 	"github.com/spf13/cobra"
 )
 

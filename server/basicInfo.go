@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari-agent/dnsresolver"
-	"github.com/komari-monitor/komari-agent/hostguard"
-	monitoring "github.com/komari-monitor/komari-agent/monitoring/unit"
-	"github.com/komari-monitor/komari-agent/protocol/transport"
-	v2 "github.com/komari-monitor/komari-agent/protocol/v2"
-	"github.com/komari-monitor/komari-agent/update"
+	"github.com/nuomiiiii/lite-agent/dnsresolver"
+	"github.com/nuomiiiii/lite-agent/hostguard"
+	monitoring "github.com/nuomiiiii/lite-agent/monitoring/unit"
+	"github.com/nuomiiiii/lite-agent/protocol/transport"
+	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
+	"github.com/nuomiiiii/lite-agent/update"
 
-	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
+	pkg_flags "github.com/nuomiiiii/lite-agent/cmd/flags"
 )
 
 var flags = pkg_flags.GlobalConfig

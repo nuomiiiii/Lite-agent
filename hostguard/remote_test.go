@@ -7,7 +7,7 @@ import (
 
 func TestEndpointTargetsLocalAddress(t *testing.T) {
 	if !endpointTargetsLocalAddress("http://127.0.0.1:25774") {
-		t.Fatal("loopback Komari endpoint was not recognized as local")
+		t.Fatal("loopback Lite endpoint was not recognized as local")
 	}
 	if endpointTargetsLocalAddress("not a URL") {
 		t.Fatal("invalid endpoint was recognized as local")
@@ -73,14 +73,14 @@ func TestSetReportedAddressesInvalidatesDetectionCache(t *testing.T) {
 }
 
 func TestKomariServerProcessRecognition(t *testing.T) {
-	for _, name := range []string{"komari", "Komari.exe", "komari-server", "KOMARI-SERVER.EXE"} {
+	for _, name := range []string{"lite", "Lite.exe", "lite-server", "komari", "Komari.exe", "komari-server", "KOMARI-SERVER.EXE"} {
 		if !isKomariServerProcess(name) {
-			t.Fatalf("expected %q to be recognized as Komari Server", name)
+			t.Fatalf("expected %q to be recognized as the panel process", name)
 		}
 	}
-	for _, name := range []string{"komari-agent", "komari-agent.exe", "docker", "other-komari"} {
+	for _, name := range []string{"lite-agent", "lite-agent.exe", "Lite-agent", "Lite-agent.exe", "komari-agent", "komari-agent.exe", "docker", "other-komari"} {
 		if isKomariServerProcess(name) {
-			t.Fatalf("did not expect %q to be recognized as Komari Server", name)
+			t.Fatalf("did not expect %q to be recognized as Lite Server", name)
 		}
 	}
 }
@@ -91,11 +91,13 @@ func TestKomariDockerContainerRecognition(t *testing.T) {
 		container dockerProcess
 		want      bool
 	}{
+		{name: "lite image", container: dockerProcess{Image: "ghcr.io/nuomiiiii/lite:2.2.3", Names: "lite"}, want: true},
 		{name: "fork image", container: dockerProcess{Image: "ghcr.io/nuomiiiii/komari:2.1.5", Names: "komari"}, want: true},
 		{name: "upstream image", container: dockerProcess{Image: "ghcr.io/komari-monitor/komari:latest", Names: "monitor"}, want: true},
 		{name: "digest image", container: dockerProcess{Image: "ghcr.io/nuomiiiii/komari@sha256:abc", Names: "panel"}, want: true},
 		{name: "local image", container: dockerProcess{Image: "local-build", Names: "komari-server-main"}, want: true},
 		{name: "agent", container: dockerProcess{Image: "ghcr.io/nuomiiiii/komari-agent:latest", Names: "komari-agent"}, want: false},
+		{name: "lite agent image", container: dockerProcess{Image: "ghcr.io/nuomiiiii/lite-agent:latest", Names: "Lite-agent"}, want: false},
 		{name: "unrelated docker app", container: dockerProcess{Image: "postgres:17", Names: "database"}, want: false},
 	}
 	for _, test := range tests {

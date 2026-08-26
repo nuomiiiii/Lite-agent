@@ -497,7 +497,7 @@ func (manager *fileManager) startUpload(request fileRequest) {
 	}
 	var tempFile *os.File
 	if err == nil {
-		tempFile, err = os.CreateTemp(filepath.Dir(target), ".komari-upload-*")
+		tempFile, err = os.CreateTemp(filepath.Dir(target), ".lite-upload-*")
 	}
 	if err != nil {
 		manager.respond(request, nil, err)
@@ -608,7 +608,7 @@ func replaceUploadedFile(tempPath, target string, overwrite bool) error {
 	if err != nil {
 		return err
 	}
-	backup := filepath.Join(filepath.Dir(target), ".komari-backup-"+backupID)
+	backup := filepath.Join(filepath.Dir(target), ".lite-backup-"+backupID)
 	if err := os.Rename(target, backup); err != nil {
 		return err
 	}

@@ -1,6 +1,12 @@
 __debug*
 agent.json
 .vscode/
+lite-agent.exe
+lite-agent
+.lite-agent.exe.old
+Lite-agent.exe
+Lite-agent
+.Lite-agent.exe.old
 komari-agent.exe
 komari-agent
 .komari-agent.exe.old

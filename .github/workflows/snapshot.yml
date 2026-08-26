@@ -106,17 +106,17 @@ jobs:
           CGO_ENABLED: 0
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          BINARY_NAME=komari-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          BINARY_NAME=Lite-agent-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME=${BINARY_NAME}.exe
           fi
-          go build -trimpath -ldflags="-X github.com/komari-monitor/komari-agent/update.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari-agent/update.Repo=${{ github.repository }}" -o $BINARY_NAME
+          go build -trimpath -ldflags="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}" -o $BINARY_NAME
 
       - name: Upload binary as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: komari-agent-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: komari-agent-${{ matrix.goos }}-${{ matrix.goarch }}*
+          name: Lite-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: Lite-agent-${{ matrix.goos }}-${{ matrix.goarch }}*
 
   publish-snapshot-release:
     needs: [prepare, build-and-attach-binaries]
@@ -165,7 +165,7 @@ jobs:
             --title "${VERSION}" \
             --notes "Automated snapshot build (${VERSION}) from commit ${{ github.sha }}." \
             --prerelease \
-            artifacts/komari-agent-*
+            artifacts/Lite-agent-*
 
           gh release list \
             --repo "${{ github.repository }}" \
@@ -216,13 +216,13 @@ jobs:
           CGO_ENABLED: 0
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          LDFLAGS="-X github.com/komari-monitor/komari-agent/update.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari-agent/update.Repo=${{ github.repository }}"
+          LDFLAGS="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}"
 
           echo "Building for linux/amd64..."
-          GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o komari-agent-linux-amd64
+          GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o Lite-agent-linux-amd64
 
           echo "Building for linux/arm64..."
-          GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o komari-agent-linux-arm64
+          GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o Lite-agent-linux-arm64
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
