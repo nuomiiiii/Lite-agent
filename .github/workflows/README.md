@@ -75,7 +75,8 @@ Purpose: publish the latest development build from `main`.
 
 Trigger:
 
-- Runs on push to `main`.
+- Runs on push to `main`, except commits whose message starts with `release:`
+  or contains `[skip snapshot]`.
 - Can be run manually with `workflow_dispatch`.
 
 Race protection:

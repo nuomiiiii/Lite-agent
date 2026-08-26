@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   validate-ref:
+    if: ${{ github.event_name == 'workflow_dispatch' || (!startsWith(github.event.head_commit.message, 'release:') && !contains(github.event.head_commit.message, '[skip snapshot]')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
