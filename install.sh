@@ -389,6 +389,12 @@ build_download_url() {
 log_step "Creating installation directory: ${GREEN}$target_dir${NC}"
 mkdir -p "$target_dir"
 
+# curl -o cannot overwrite a running executable (ETXTBSY / "Text file busy").
+# Write a new inode, then replace the name so a live Lite-agent can keep running
+# until the service is restarted.
+download_path_tmp="${agent_path}.new"
+rm -f "$download_path_tmp"
+
 download_ok=false
 for candidate in \
     "${github_repo}|${file_name}"; do
@@ -401,10 +407,11 @@ for candidate in \
         log_step "Downloading $name directly..."
     fi
     log_info "URL: ${CYAN}$download_url${NC}"
-    if curl --fail --show-error -L -o "$agent_path" "$download_url"; then
+    if curl --fail --show-error -L -o "$download_path_tmp" "$download_url"; then
         download_ok=true
         break
     fi
+    rm -f "$download_path_tmp"
     log_warning "Download from $repo/$name failed, trying next source..."
 done
 
@@ -413,8 +420,12 @@ if [ "$download_ok" != true ]; then
     exit 1
 fi
 
-# Set executable permissions
-chmod +x "$agent_path"
+chmod +x "$download_path_tmp"
+if ! mv -f "$download_path_tmp" "$agent_path"; then
+    log_error "Failed to replace ${agent_path}"
+    rm -f "$download_path_tmp"
+    exit 1
+fi
 log_success "Lite-agent installed to ${GREEN}$agent_path${NC}"
 
 # Detect init system and configure service
