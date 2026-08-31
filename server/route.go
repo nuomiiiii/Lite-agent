@@ -41,7 +41,7 @@ func NewRouteTask(conn *ws.SafeConn, task v2.RouteParams) {
 		errText = err.Error()
 		log.Printf("Return route task %d failed: %v", task.TaskID, err)
 	}
-	payload := v2.BuildRouteResultPayload(task, hops, errText, finishedAt)
+	payload := v2.BuildRouteResultPayload(task, hops, errText, finishedAt, routeResolvedTarget(task.Target, task.IPVersion, hops), routeTargetReached(hops, task.Target, task.IPVersion))
 	if conn == nil {
 		if err := postV2RPC(payload); err != nil {
 			log.Printf("Failed to upload return route result over POST: %v", err)
@@ -205,4 +205,28 @@ func routePeerIP(addr net.Addr) string {
 	default:
 		return strings.Split(addr.String(), "%")[0]
 	}
+}
+
+func routeResolvedTarget(target string, version int, _ []v2.RouteHop) string {
+	dest, err := resolveRouteTarget(target, version)
+	if err != nil || dest == nil {
+		return ""
+	}
+	return dest.String()
+}
+
+func routeTargetReached(hops []v2.RouteHop, target string, version int) bool {
+	dest, err := resolveRouteTarget(target, version)
+	if err != nil || dest == nil {
+		return false
+	}
+	for _, hop := range hops {
+		if hop.Timeout {
+			continue
+		}
+		if ip := net.ParseIP(strings.TrimSpace(hop.IP)); ip != nil && ip.Equal(dest) {
+			return true
+		}
+	}
+	return false
 }

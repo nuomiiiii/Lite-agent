@@ -2,6 +2,7 @@ package v2
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	v1 "github.com/nuomiiiii/lite-agent/protocol/v1"
@@ -149,15 +150,22 @@ func BuildPingResultPayload(taskID uint, pingType string, value int, finishedAt 
 	}
 }
 
-func BuildRouteResultPayload(task RouteParams, hops []RouteHop, probeError string, finishedAt time.Time) interface{} {
+func BuildRouteResultPayload(task RouteParams, hops []RouteHop, probeError string, finishedAt time.Time, resolvedTarget string, targetReached bool) interface{} {
+	params := map[string]interface{}{
+		"task_id": task.TaskID, "protocol": task.Protocol, "target": task.Target,
+		"ip_version": task.IPVersion, "hops": hops, "error": probeError,
+		"finished_at": finishedAt.Format(time.RFC3339Nano),
+	}
+	if strings.TrimSpace(resolvedTarget) != "" {
+		params["resolved_target_ip"] = resolvedTarget
+	}
+	if targetReached {
+		params["target_reached"] = true
+	}
 	return Request{
 		JSONRPC: Version,
 		Method:  MethodAgentRouteResult,
-		Params: map[string]interface{}{
-			"task_id": task.TaskID, "protocol": task.Protocol, "target": task.Target,
-			"ip_version": task.IPVersion, "hops": hops, "error": probeError,
-			"finished_at": finishedAt.Format(time.RFC3339Nano),
-		},
+		Params:  params,
 	}
 }
 

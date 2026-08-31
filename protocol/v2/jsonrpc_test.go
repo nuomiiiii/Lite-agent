@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildBasicInfoPayloadReportsOnlyRuntimeSafeConfig(t *testing.T) {
@@ -82,5 +83,34 @@ func TestBuildBasicInfoPayloadCarriesConfigResult(t *testing.T) {
 	}
 	if params.ConfigState == nil || params.ConfigState.Revision != 8 {
 		t.Fatalf("config state = %+v", params.ConfigState)
+	}
+}
+
+func TestBuildRouteResultPayloadIncludesReachability(t *testing.T) {
+	finished := time.Unix(0, 0).UTC()
+	payload := BuildRouteResultPayload(RouteParams{TaskID: 3, Protocol: "icmp", Target: "example.com", IPVersion: 4}, nil, "", finished, "1.1.1.1", true)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	if !strings.Contains(text, `"resolved_target_ip":"1.1.1.1"`) {
+		t.Fatalf("missing resolved_target_ip: %s", text)
+	}
+	if !strings.Contains(text, `"target_reached":true`) {
+		t.Fatalf("missing target_reached: %s", text)
+	}
+}
+
+func TestBuildRouteResultPayloadOmitsEmptyReachability(t *testing.T) {
+	finished := time.Unix(0, 0).UTC()
+	payload := BuildRouteResultPayload(RouteParams{TaskID: 3, Target: "1.1.1.1", IPVersion: 4}, nil, "", finished, "", false)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	if strings.Contains(text, "resolved_target_ip") || strings.Contains(text, "target_reached") {
+		t.Fatalf("optional fields should be omitted: %s", text)
 	}
 }

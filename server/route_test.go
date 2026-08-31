@@ -17,6 +17,28 @@ func TestResolveRouteTargetLiteralAddress(t *testing.T) {
 	}
 }
 
+func TestRouteTargetReachedMatchesHopIP(t *testing.T) {
+	hops := []v2.RouteHop{
+		{IP: "192.0.2.1"},
+		{IP: "1.1.1.1"},
+	}
+	if !routeTargetReached(hops, "1.1.1.1", 4) {
+		t.Fatal("expected target reached")
+	}
+	if routeTargetReached(hops, "8.8.8.8", 4) {
+		t.Fatal("did not expect target reached")
+	}
+	if routeTargetReached([]v2.RouteHop{{IP: "1.1.1.1", Timeout: true}}, "1.1.1.1", 4) {
+		t.Fatal("timeout hop should not count as reached")
+	}
+}
+
+func TestRouteResolvedTargetLiteral(t *testing.T) {
+	if got := routeResolvedTarget("1.1.1.1", 4, nil); got != "1.1.1.1" {
+		t.Fatalf("resolved = %q", got)
+	}
+}
+
 func TestRunRouteProbeConvertsPanicsToErrors(t *testing.T) {
 	previous := routeProbeImplementation
 	routeProbeImplementation = func(string, int, int) ([]v2.RouteHop, error) {
