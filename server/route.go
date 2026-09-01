@@ -120,27 +120,22 @@ func traceRouteICMPv4(destination net.IP, maxHops int) ([]v2.RouteHop, error) {
 			return hops, err
 		}
 		start := time.Now()
-		_ = conn.SetDeadline(start.Add(routeHopTimeout))
+		deadline := start.Add(routeHopTimeout)
+		_ = conn.SetWriteDeadline(deadline)
 		if _, err := conn.WriteTo(payload, &net.IPAddr{IP: destination}); err != nil {
 			return hops, fmt.Errorf("send IPv4 route probe: %w", err)
 		}
-		buffer := make([]byte, 1500)
-		n, peer, err := conn.ReadFrom(buffer)
+		peer, reached, err := waitIPv4RouteReply(conn, destination, id, ttl, deadline)
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				hops = append(hops, v2.RouteHop{TTL: ttl, Timeout: true})
-				continue
-			}
 			return hops, fmt.Errorf("read IPv4 route probe: %w", err)
 		}
-		reply, err := icmp.ParseMessage(1, buffer[:n])
-		if err != nil {
+		if peer == nil {
 			hops = append(hops, v2.RouteHop{TTL: ttl, Timeout: true})
 			continue
 		}
 		ip := routePeerIP(peer)
 		hops = append(hops, v2.RouteHop{TTL: ttl, IP: ip, LatencyMS: float64(time.Since(start).Microseconds()) / 1000})
-		if reply.Type == ipv4.ICMPTypeEchoReply || net.ParseIP(ip).Equal(destination) {
+		if reached {
 			break
 		}
 	}
@@ -169,27 +164,22 @@ func traceRouteICMPv6(destination net.IP, maxHops int) ([]v2.RouteHop, error) {
 			return hops, err
 		}
 		start := time.Now()
-		_ = conn.SetDeadline(start.Add(routeHopTimeout))
+		deadline := start.Add(routeHopTimeout)
+		_ = conn.SetWriteDeadline(deadline)
 		if _, err := conn.WriteTo(payload, &net.IPAddr{IP: destination}); err != nil {
 			return hops, fmt.Errorf("send IPv6 route probe: %w", err)
 		}
-		buffer := make([]byte, 1500)
-		n, peer, err := conn.ReadFrom(buffer)
+		peer, reached, err := waitIPv6RouteReply(conn, destination, id, ttl, deadline)
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				hops = append(hops, v2.RouteHop{TTL: ttl, Timeout: true})
-				continue
-			}
 			return hops, fmt.Errorf("read IPv6 route probe: %w", err)
 		}
-		reply, err := icmp.ParseMessage(58, buffer[:n])
-		if err != nil {
+		if peer == nil {
 			hops = append(hops, v2.RouteHop{TTL: ttl, Timeout: true})
 			continue
 		}
 		ip := routePeerIP(peer)
 		hops = append(hops, v2.RouteHop{TTL: ttl, IP: ip, LatencyMS: float64(time.Since(start).Microseconds()) / 1000})
-		if reply.Type == ipv6.ICMPTypeEchoReply || net.ParseIP(ip).Equal(destination) {
+		if reached {
 			break
 		}
 	}
@@ -229,4 +219,165 @@ func routeTargetReached(hops []v2.RouteHop, target string, version int) bool {
 		}
 	}
 	return false
+}
+
+func waitIPv4RouteReply(conn *icmp.PacketConn, dest net.IP, id, seq int, deadline time.Time) (net.Addr, bool, error) {
+	return waitICMPRouteReply(conn, dest, id, seq, deadline, matchIPv4RouteReply)
+}
+
+func waitIPv6RouteReply(conn *icmp.PacketConn, dest net.IP, id, seq int, deadline time.Time) (net.Addr, bool, error) {
+	return waitICMPRouteReply(conn, dest, id, seq, deadline, matchIPv6RouteReply)
+}
+
+func waitICMPRouteReply(
+	conn *icmp.PacketConn,
+	dest net.IP,
+	id, seq int,
+	deadline time.Time,
+	match func(payload []byte, peer string, dest net.IP, id, seq int) (bool, bool),
+) (net.Addr, bool, error) {
+	buffer := make([]byte, 1500)
+	for {
+		remain := time.Until(deadline)
+		if remain <= 0 {
+			return nil, false, nil
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(remain))
+		n, addr, err := conn.ReadFrom(buffer)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+		matched, reached := match(buffer[:n], routePeerIP(addr), dest, id, seq)
+		if matched {
+			return addr, reached, nil
+		}
+	}
+}
+
+func matchIPv4RouteReply(payload []byte, peer string, dest net.IP, id, seq int) (bool, bool) {
+	reply, err := icmp.ParseMessage(1, payload)
+	if err != nil {
+		return false, false
+	}
+	switch reply.Type {
+	case ipv4.ICMPTypeEchoReply:
+		if !icmpEchoMatches(reply.Body, id, seq) {
+			return false, false
+		}
+		peerIP := net.ParseIP(peer)
+		if peerIP == nil || dest == nil || !peerIP.Equal(dest) {
+			return false, false
+		}
+		return true, true
+	case ipv4.ICMPTypeTimeExceeded, ipv4.ICMPTypeDestinationUnreachable:
+		inner := icmpEmbeddedPayload(reply.Body)
+		innerDest, echoID, echoSeq, ok := parseIPv4EmbeddedEcho(inner)
+		if !ok || echoID != id || echoSeq != seq || dest == nil || !innerDest.Equal(dest) {
+			return false, false
+		}
+		peerIP := net.ParseIP(peer)
+		return true, peerIP != nil && dest != nil && peerIP.Equal(dest)
+	default:
+		return false, false
+	}
+}
+
+func matchIPv6RouteReply(payload []byte, peer string, dest net.IP, id, seq int) (bool, bool) {
+	reply, err := icmp.ParseMessage(58, payload)
+	if err != nil {
+		return false, false
+	}
+	switch reply.Type {
+	case ipv6.ICMPTypeEchoReply:
+		if !icmpEchoMatches(reply.Body, id, seq) {
+			return false, false
+		}
+		peerIP := net.ParseIP(peer)
+		if peerIP == nil || dest == nil || !peerIP.Equal(dest) {
+			return false, false
+		}
+		return true, true
+	case ipv6.ICMPTypeTimeExceeded, ipv6.ICMPTypeDestinationUnreachable:
+		inner := icmpEmbeddedPayload(reply.Body)
+		innerDest, echoID, echoSeq, ok := parseIPv6EmbeddedEcho(inner)
+		if !ok || echoID != id || echoSeq != seq || dest == nil || !innerDest.Equal(dest) {
+			return false, false
+		}
+		peerIP := net.ParseIP(peer)
+		return true, peerIP != nil && dest != nil && peerIP.Equal(dest)
+	default:
+		return false, false
+	}
+}
+
+func icmpEchoMatches(body icmp.MessageBody, id, seq int) bool {
+	echo, ok := body.(*icmp.Echo)
+	return ok && echo != nil && echo.ID == id && echo.Seq == seq
+}
+
+func icmpEmbeddedPayload(body icmp.MessageBody) []byte {
+	switch value := body.(type) {
+	case *icmp.TimeExceeded:
+		return value.Data
+	case *icmp.DstUnreach:
+		return value.Data
+	default:
+		return nil
+	}
+}
+
+func parseIPv4EmbeddedEcho(data []byte) (net.IP, int, int, bool) {
+	if len(data) < 20 {
+		return nil, 0, 0, false
+	}
+	if data[0]>>4 != 4 {
+		return nil, 0, 0, false
+	}
+	headerLen := int(data[0]&0x0f) * 4
+	if headerLen < 20 || len(data) < headerLen {
+		return nil, 0, 0, false
+	}
+	dest := net.IPv4(data[16], data[17], data[18], data[19])
+	id, seq, ok := parseICMPEchoIdentity(1, 8, data[headerLen:])
+	if !ok {
+		return nil, 0, 0, false
+	}
+	return dest, id, seq, true
+}
+
+func parseIPv6EmbeddedEcho(data []byte) (net.IP, int, int, bool) {
+	if len(data) < 40 {
+		return nil, 0, 0, false
+	}
+	if data[0]>>4 != 6 {
+		return nil, 0, 0, false
+	}
+	dest := net.IP(append([]byte(nil), data[24:40]...))
+	id, seq, ok := parseICMPEchoIdentity(58, 128, data[40:])
+	if !ok {
+		return nil, 0, 0, false
+	}
+	return dest, id, seq, true
+}
+
+func parseICMPEchoIdentity(proto, echoRequestType int, payload []byte) (int, int, bool) {
+	if len(payload) >= 8 {
+		if int(payload[0]) == echoRequestType {
+			id := int(payload[4])<<8 | int(payload[5])
+			seq := int(payload[6])<<8 | int(payload[7])
+			return id, seq, true
+		}
+	}
+	msg, err := icmp.ParseMessage(proto, payload)
+	if err != nil {
+		return 0, 0, false
+	}
+	echo, ok := msg.Body.(*icmp.Echo)
+	if !ok || echo == nil {
+		return 0, 0, false
+	}
+	return echo.ID, echo.Seq, true
 }

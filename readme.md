@@ -2,7 +2,7 @@
 
 Lite 的跨平台节点监控 Agent。本仓库版本在基础监控之外，支持安全远程终端、文件管理、远程命令、Cloudflare Access、在线配置下发与配置结果回执。
 
-当前稳定版本：`2.3.0.1`
+当前稳定版本：`2.3.0.2`
 
 ## 安装与升级
 
@@ -29,7 +29,7 @@ docker pull ghcr.io/nuomiiiii/Lite-agent:latest
 也可以拉取固定版本：
 
 ```bash
-docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.0.1
+docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.0.2
 ```
 
 容器的启动参数、宿主机目录挂载和节点 Token 请以 Lite 后台生成的部署命令为准。Docker 部署不会在容器内替换 Agent 二进制；升级时需拉取新镜像并重建容器。
@@ -201,5 +201,6 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 | `2.2.0.2` | 修复 WebSocket 断开后进程仍在、面板显示离线的问题；写超时后立即重连，在线状态不再依赖采集间隔或探测任务。 |
 | `2.3.0.0` | 独立仓 `nuomiiiii/Lite-agent` 发版；自动更新只认本仓 `Lite-agent-*` 产物。默认节点会迁到 Lite 安装目录，进程名为 `Lite-agent`。WebSocket 增加读超时与心跳保活，握手后检查连接是否还活着，断开后短延迟重连；假死连接大约 1 分钟内会重连。 |
 | `2.3.0.1` | 回程探测会附带是否到达目标。目标是域名时，面板也能判断探测是否走到解析后的 IP。 |
+| `2.3.0.2` | 回程探测只认本次探测的 ICMP 回包，避免把无关或上一跳晚到的包当成路径跳点。 |
 
 完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-agent/releases)。
