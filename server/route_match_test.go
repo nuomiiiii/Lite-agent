@@ -13,33 +13,33 @@ func TestMatchIPv4RouteReplyIgnoresUnrelatedAndLatePackets(t *testing.T) {
 	dest := net.ParseIP("203.0.113.8").To4()
 	id, seq := 42, 5
 
-	matched, reached := matchIPv4RouteReply(mustMarshalICMP(t, ipv4.ICMPTypeEchoReply, &icmp.Echo{ID: id, Seq: seq, Data: []byte("komari-route")}), dest.String(), dest, id, seq)
+	matched, reached := matchIPv4RouteReply(mustMarshalICMP(t, ipv4.ICMPTypeEchoReply, &icmp.Echo{ID: id, Seq: seq, Data: []byte("lite-route")}), dest.String(), dest, id, seq)
 	if !matched || !reached {
 		t.Fatal("matching echo reply should be accepted")
 	}
 
-	matched, _ = matchIPv4RouteReply(mustMarshalICMP(t, ipv4.ICMPTypeEchoReply, &icmp.Echo{ID: id + 1, Seq: seq, Data: []byte("komari-route")}), dest.String(), dest, id, seq)
+	matched, _ = matchIPv4RouteReply(mustMarshalICMP(t, ipv4.ICMPTypeEchoReply, &icmp.Echo{ID: id + 1, Seq: seq, Data: []byte("lite-route")}), dest.String(), dest, id, seq)
 	if matched {
 		t.Fatal("echo reply with a different ID must be ignored")
 	}
 
-	matched, _ = matchIPv4RouteReply(mustMarshalICMP(t, ipv4.ICMPTypeEchoReply, &icmp.Echo{ID: id, Seq: seq - 1, Data: []byte("komari-route")}), dest.String(), dest, id, seq)
+	matched, _ = matchIPv4RouteReply(mustMarshalICMP(t, ipv4.ICMPTypeEchoReply, &icmp.Echo{ID: id, Seq: seq - 1, Data: []byte("lite-route")}), dest.String(), dest, id, seq)
 	if matched {
 		t.Fatal("late packet from a previous TTL must be ignored")
 	}
 
-	matched, _ = matchIPv4RouteReply(mustMarshalICMP(t, ipv4.ICMPTypeEchoReply, &icmp.Echo{ID: id, Seq: seq, Data: []byte("komari-route")}), "198.51.100.1", dest, id, seq)
+	matched, _ = matchIPv4RouteReply(mustMarshalICMP(t, ipv4.ICMPTypeEchoReply, &icmp.Echo{ID: id, Seq: seq, Data: []byte("lite-route")}), "198.51.100.1", dest, id, seq)
 	if matched {
 		t.Fatal("echo reply from another host must be ignored")
 	}
 
-	inner := append(ipv4TestHeader(net.ParseIP("198.51.100.1"), dest), mustMarshalICMP(t, ipv4.ICMPTypeEcho, &icmp.Echo{ID: id, Seq: seq, Data: []byte("komari-route")})...)
+	inner := append(ipv4TestHeader(net.ParseIP("198.51.100.1"), dest), mustMarshalICMP(t, ipv4.ICMPTypeEcho, &icmp.Echo{ID: id, Seq: seq, Data: []byte("lite-route")})...)
 	matched, reached = matchIPv4RouteReply(mustMarshalICMP(t, ipv4.ICMPTypeTimeExceeded, &icmp.TimeExceeded{Data: inner}), "198.51.100.1", dest, id, seq)
 	if !matched || reached {
 		t.Fatalf("matching time exceeded = matched=%v reached=%v", matched, reached)
 	}
 
-	wrongDest := append(ipv4TestHeader(net.ParseIP("198.51.100.1"), net.ParseIP("203.0.113.9")), mustMarshalICMP(t, ipv4.ICMPTypeEcho, &icmp.Echo{ID: id, Seq: seq, Data: []byte("komari-route")})...)
+	wrongDest := append(ipv4TestHeader(net.ParseIP("198.51.100.1"), net.ParseIP("203.0.113.9")), mustMarshalICMP(t, ipv4.ICMPTypeEcho, &icmp.Echo{ID: id, Seq: seq, Data: []byte("lite-route")})...)
 	matched, _ = matchIPv4RouteReply(mustMarshalICMP(t, ipv4.ICMPTypeTimeExceeded, &icmp.TimeExceeded{Data: wrongDest}), "198.51.100.1", dest, id, seq)
 	if matched {
 		t.Fatal("time exceeded for another destination must be ignored")
@@ -50,17 +50,17 @@ func TestMatchIPv6RouteReplyIgnoresUnrelatedAndLatePackets(t *testing.T) {
 	dest := net.ParseIP("2001:db8::8")
 	id, seq := 7, 3
 
-	matched, reached := matchIPv6RouteReply(mustMarshalICMP(t, ipv6.ICMPTypeEchoReply, &icmp.Echo{ID: id, Seq: seq, Data: []byte("komari-route")}), dest.String(), dest, id, seq)
+	matched, reached := matchIPv6RouteReply(mustMarshalICMP(t, ipv6.ICMPTypeEchoReply, &icmp.Echo{ID: id, Seq: seq, Data: []byte("lite-route")}), dest.String(), dest, id, seq)
 	if !matched || !reached {
 		t.Fatal("matching IPv6 echo reply should be accepted")
 	}
 
-	matched, _ = matchIPv6RouteReply(mustMarshalICMP(t, ipv6.ICMPTypeEchoReply, &icmp.Echo{ID: id, Seq: seq - 1, Data: []byte("komari-route")}), dest.String(), dest, id, seq)
+	matched, _ = matchIPv6RouteReply(mustMarshalICMP(t, ipv6.ICMPTypeEchoReply, &icmp.Echo{ID: id, Seq: seq - 1, Data: []byte("lite-route")}), dest.String(), dest, id, seq)
 	if matched {
 		t.Fatal("IPv6 late packet from a previous hop must be ignored")
 	}
 
-	inner := append(ipv6TestHeader(net.ParseIP("2001:db8::1"), dest), mustMarshalICMP(t, ipv6.ICMPTypeEchoRequest, &icmp.Echo{ID: id, Seq: seq, Data: []byte("komari-route")})...)
+	inner := append(ipv6TestHeader(net.ParseIP("2001:db8::1"), dest), mustMarshalICMP(t, ipv6.ICMPTypeEchoRequest, &icmp.Echo{ID: id, Seq: seq, Data: []byte("lite-route")})...)
 	matched, reached = matchIPv6RouteReply(mustMarshalICMP(t, ipv6.ICMPTypeTimeExceeded, &icmp.TimeExceeded{Data: inner}), "2001:db8::1", dest, id, seq)
 	if !matched || reached {
 		t.Fatalf("matching IPv6 time exceeded = matched=%v reached=%v", matched, reached)

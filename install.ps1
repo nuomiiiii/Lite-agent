@@ -187,7 +187,7 @@ function Copy-SidecarsFrom {
     param([string]$SourceDir)
     if (-not (Test-Path $SourceDir) -or $SourceDir -eq $InstallDir) { return }
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    foreach ($name in @("auto-discovery.json", "net_static.json", "net_static.json.bak", "nssm.exe")) {
+    foreach ($name in @("auto-discovery.json", "net_static.json", "net_static.json.bak", "nssm.exe", "node.json", "remote-control.state")) {
         $src = Join-Path $SourceDir $name
         $dst = Join-Path $InstallDir $name
         if ((Test-Path $src) -and -not (Test-Path $dst)) {
@@ -231,6 +231,134 @@ function Wait-AgentService {
     return $false
 }
 
+function Test-AgentServiceExists {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    $status = nssm status $Name 2>&1 | Out-String
+    return $status -notmatch "does not exist"
+}
+
+function ConvertFrom-ArgString {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return @() }
+    return @($Text.Trim() -split '\s+' | Where-Object { $_ -ne '' })
+}
+
+function Test-HasNamedFlag {
+    param([string[]]$ArgList, [string]$Name)
+    foreach ($item in @($ArgList)) {
+        if ($item -eq "--$Name" -or $item -like "--$Name=*") { return $true }
+    }
+    return $false
+}
+
+function Get-NamedFlagValue {
+    param([string[]]$ArgList, [string]$Name)
+    foreach ($item in @($ArgList)) {
+        if ($item -eq "--$Name") { return "true" }
+        if ($item.StartsWith("--$Name=")) { return $item.Substring("--$Name=".Length) }
+    }
+    return "true"
+}
+
+function Get-FlagArgValue {
+    param([string[]]$ArgList, [string]$Name)
+    $items = @($ArgList)
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $item = $items[$i]
+        if ($item -eq "--$Name") {
+            if (($i + 1) -lt $items.Count -and -not $items[$i + 1].StartsWith("-")) {
+                return $items[$i + 1]
+            }
+            return ""
+        }
+        if ($item.StartsWith("--$Name=")) {
+            return $item.Substring("--$Name=".Length)
+        }
+    }
+    return ""
+}
+
+function Preserve-ExistingConfigArg {
+    param([string[]]$Incoming, [string[]]$ExistingArgs)
+    if (Test-HasNamedFlag $Incoming "config") {
+        return @($Incoming)
+    }
+    $cfg = Get-FlagArgValue $ExistingArgs "config"
+    if ([string]::IsNullOrWhiteSpace($cfg) -or -not (Test-Path $cfg)) {
+        return @($Incoming)
+    }
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    $dest = Join-Path $InstallDir (Split-Path $cfg -Leaf)
+    if ($cfg -ne $dest -and -not (Test-Path $dest)) {
+        Log-Info "Copying config $(Split-Path $cfg -Leaf) to $InstallDir"
+        Copy-Item $cfg $dest -Force
+    }
+    if (Test-Path $dest) {
+        Log-Info "Keeping existing --config $dest"
+        return @($Incoming + "--config" + $dest)
+    }
+    return @($Incoming)
+}
+
+function ConvertTo-BoolFlag {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $true }
+    switch ($Value.Trim().ToLowerInvariant()) {
+        "false" { return $false }
+        "0" { return $false }
+        "no" { return $false }
+        "off" { return $false }
+        default { return $true }
+    }
+}
+
+function Add-RemoteControlArg {
+    param([string[]]$ArgList, [bool]$Enabled)
+    $trimmed = @($ArgList | Where-Object {
+            $_ -notmatch '^--enable-remote-control(=|$)' -and $_ -notmatch '^--disable-web-ssh(=|$)'
+        })
+    if ($Enabled) {
+        return @($trimmed + "--enable-remote-control=true")
+    }
+    return @($trimmed + "--enable-remote-control=false")
+}
+
+function Resolve-RemoteControlInstallArgs {
+    param([string[]]$Incoming, [bool]$ManagedExists, [string[]]$ExistingArgs)
+    if (Test-HasNamedFlag $Incoming "enable-remote-control") {
+        return @($Incoming)
+    }
+    if (Test-HasNamedFlag $Incoming "disable-web-ssh") {
+        $disabled = ConvertTo-BoolFlag (Get-NamedFlagValue $Incoming "disable-web-ssh")
+        return @(Add-RemoteControlArg $Incoming (-not $disabled))
+    }
+    if (-not $ManagedExists) {
+        return @(Add-RemoteControlArg $Incoming $false)
+    }
+    if (Test-HasNamedFlag $ExistingArgs "enable-remote-control") {
+        $enabled = ConvertTo-BoolFlag (Get-NamedFlagValue $ExistingArgs "enable-remote-control")
+        return @(Add-RemoteControlArg $Incoming $enabled)
+    }
+    if (Test-HasNamedFlag $ExistingArgs "disable-web-ssh") {
+        $disabled = ConvertTo-BoolFlag (Get-NamedFlagValue $ExistingArgs "disable-web-ssh")
+        return @(Add-RemoteControlArg $Incoming (-not $disabled))
+    }
+    return @(Add-RemoteControlArg $Incoming $true)
+}
+
+$managedExists = $false
+$existingArgs = @()
+if (Test-AgentServiceExists $ServiceName) {
+    $managedExists = $true
+    $existingArgs = ConvertFrom-ArgString ((nssm get $ServiceName AppParameters 2>&1 | Out-String))
+}
+elseif (-not $CustomLayout -and (Test-AgentServiceExists $LegacyServiceName)) {
+    $managedExists = $true
+    $existingArgs = ConvertFrom-ArgString ((nssm get $LegacyServiceName AppParameters 2>&1 | Out-String))
+}
+$AgentArgs = @(Resolve-RemoteControlInstallArgs -Incoming $AgentArgs -ManagedExists $managedExists -ExistingArgs $existingArgs)
+
 if (-not $CustomLayout) {
     Log-Step "Copying sidecar files from the default Komari directory..."
     Copy-SidecarsFrom -SourceDir $LegacyDir
@@ -239,6 +367,7 @@ else {
     Log-Step "Custom install layout; leaving komari-agent in place."
     Remove-AgentService -Name $ServiceName
 }
+$AgentArgs = @(Preserve-ExistingConfigArg -Incoming $AgentArgs -ExistingArgs $existingArgs)
 
 function Get-LatestTag {
     param([string]$Repo)

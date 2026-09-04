@@ -8,6 +8,58 @@ import (
 	"testing"
 )
 
+func TestLooksLikeExistingInstallDetectsManagedLayouts(t *testing.T) {
+	if !looksLikeExistingInstall("linux", "/opt/lite-agent/Lite-agent", "", "", func(string) error { return os.ErrNotExist }) {
+		t.Fatal("modern linux layout should look like an existing install")
+	}
+	if !looksLikeExistingInstall("linux", "/opt/komari/agent", "", "", func(string) error { return os.ErrNotExist }) {
+		t.Fatal("legacy linux layout should look like an existing install")
+	}
+	if looksLikeExistingInstall("linux", "/tmp/custom/Lite-agent", "", "", func(string) error { return os.ErrNotExist }) {
+		t.Fatal("custom path without sidecars should look like a new install")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "node.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !looksLikeExistingInstall("linux", filepath.Join(dir, "Lite-agent"), "", "", statPath) {
+		t.Fatal("sidecar node.json should look like an existing install")
+	}
+	if !looksLikePriorHostInstall("linux", filepath.Join(dir, "Lite-agent"), "", "", statPath) {
+		t.Fatal("sidecar node.json should count as a host upgrade")
+	}
+	if !looksLikeExistingInstall("linux", "/tmp/x/Lite-agent", "", "", func(path string) error {
+		if path == "/.komari-agent-container" {
+			return nil
+		}
+		return os.ErrNotExist
+	}) {
+		t.Fatal("container marker should look like an existing install")
+	}
+	if looksLikePriorHostInstall("linux", "/opt/lite-agent/Lite-agent", "", "", func(path string) error {
+		if path == "/.lite-agent-container" || path == "/.komari-agent-container" {
+			return nil
+		}
+		return os.ErrNotExist
+	}) {
+		t.Fatal("container marker must not count as a host upgrade")
+	}
+	if looksLikePriorHostInstall("linux", "/opt/lite-agent/Lite-agent", "", "", func(string) error { return os.ErrNotExist }) {
+		t.Fatal("empty modern linux layout must not count as a host upgrade")
+	}
+	if !looksLikePriorHostInstall("linux", "/opt/komari/agent", "", "", func(string) error { return os.ErrNotExist }) {
+		t.Fatal("legacy linux layout should count as a host upgrade")
+	}
+	if !looksLikePriorHostInstall("linux", "/opt/lite-agent/Lite-agent", "", "", func(path string) error {
+		if filepath.Base(path) == "auto-discovery.json" {
+			return nil
+		}
+		return os.ErrNotExist
+	}) {
+		t.Fatal("modern layout with auto-discovery.json should count as a host upgrade")
+	}
+}
+
 func TestDetectPlanUsesLiteAgentProcessName(t *testing.T) {
 	plan, ok := detectPlan("linux", "/opt/komari/agent", "", "")
 	if !ok {

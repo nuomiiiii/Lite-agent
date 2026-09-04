@@ -34,7 +34,7 @@ func TestEmptyHandshakeIsNotTreatedAsHealthy(t *testing.T) {
 
 	done := make(chan struct{})
 	started := time.Now()
-	go handleWebSocketMessages(conn, 2, done)
+	go handleWebSocketMessages(conn, done)
 
 	select {
 	case <-done:
@@ -72,7 +72,7 @@ func TestReadMessageTimesOutWhenPeerStopsPonging(t *testing.T) {
 
 	done := make(chan struct{})
 	started := time.Now()
-	go handleWebSocketMessages(conn, 2, done)
+	go handleWebSocketMessages(conn, done)
 
 	select {
 	case <-done:

@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"github.com/blang/semver"
+	"github.com/nuomiiiii/lite-agent/cmd/flags"
 	"github.com/nuomiiiii/lite-agent/dnsresolver"
+	"github.com/nuomiiiii/lite-agent/remotecontrol"
 	"github.com/rhysd/go-github-selfupdate/selfupdate"
 )
 
 var (
-	CurrentVersion string = "2.3.0.2"
+	CurrentVersion string = "2.3.1.0"
 	Repo           string = "nuomiiiii/Lite-agent"
 )
 
@@ -28,9 +30,9 @@ const (
 	snapshotVersionPrefix     = "Snapshot-"
 	containerMarkerPath       = "/.lite-agent-container"
 	legacyContainerMarkerPath = "/.komari-agent-container"
-	githubAPIBaseURL      = "https://api.github.com"
-	regularCheckInterval  = 6 * time.Hour
-	retryCheckInterval    = 15 * time.Minute
+	githubAPIBaseURL          = "https://api.github.com"
+	regularCheckInterval      = 6 * time.Hour
+	retryCheckInterval        = 15 * time.Minute
 )
 
 type buildTrack int
@@ -468,7 +470,7 @@ func checkAndUpdateStable(currentVersion comparableVersion, updater *selfupdate.
 	}
 
 	log.Printf("Will update %s from %s to %s\n", cmdPath, CurrentVersion, latest.TagName)
-	if err := updater.UpdateTo(selfUpdateReleaseFromStable(owner, repo, latest), cmdPath); err != nil {
+	if err := replaceAgentBinary(updater, selfUpdateReleaseFromStable(owner, repo, latest), cmdPath); err != nil {
 		return fmt.Errorf("failed to update to stable release %s: %w", latest.TagName, err)
 	}
 	// Default is installed as a service, so don't automatically restart
@@ -517,7 +519,7 @@ func checkAndUpdateSnapshot(updater *selfupdate.Updater) error {
 	}
 
 	log.Printf("Will update %s from snapshot %s to %s\n", cmdPath, CurrentVersion, latest.TagName)
-	if err := updater.UpdateTo(selfUpdateReleaseFromSnapshot(owner, repo, latest), cmdPath); err != nil {
+	if err := replaceAgentBinary(updater, selfUpdateReleaseFromSnapshot(owner, repo, latest), cmdPath); err != nil {
 		return fmt.Errorf("failed to update to snapshot %s: %w", latest.TagName, err)
 	}
 
@@ -546,4 +548,22 @@ func CheckAndUpdate() error {
 	}
 
 	return checkAndUpdateStable(currentVersion, updater)
+}
+
+func persistRemoteControlBeforeReplace(cmdPath string) error {
+	return remotecontrol.WriteAtomic(remotecontrol.PathForExecutable(cmdPath), flags_pkg.RemoteControlEnabled())
+}
+
+var (
+	persistRemoteControlState = persistRemoteControlBeforeReplace
+	updateBinaryTo            = func(updater *selfupdate.Updater, rel *selfupdate.Release, cmdPath string) error {
+		return updater.UpdateTo(rel, cmdPath)
+	}
+)
+
+func replaceAgentBinary(updater *selfupdate.Updater, rel *selfupdate.Release, cmdPath string) error {
+	if err := persistRemoteControlState(cmdPath); err != nil {
+		return fmt.Errorf("persist remote-control state before replacing binary: %w", err)
+	}
+	return updateBinaryTo(updater, rel, cmdPath)
 }

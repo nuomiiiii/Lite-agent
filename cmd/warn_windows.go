@@ -102,7 +102,7 @@ func ShowToast() {
 		Title:   title,
 		Message: message,
 		Actions: []toast.Action{
-			{Type: "protocol", Label: "Help", Arguments: "https://komari-document.pages.dev/faq/uninstall.html"},
+			{Type: "protocol", Label: "Help", Arguments: "https://nuomiiiii.github.io/Lite-document/install/agent.html"},
 		},
 	}
 	if err := n.Push(); err != nil {

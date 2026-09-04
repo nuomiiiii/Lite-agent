@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/nuomiiiii/lite-agent/hostguard"
 )
 
 type remoteWriter struct {
@@ -29,12 +27,8 @@ func (writer *remoteWriter) writeJSON(value any) error {
 
 func StartRemoteSession(conn *websocket.Conn) {
 	writer := &remoteWriter{conn: conn}
-	if flags.DisableWebSsh {
+	if !remoteControlEnabled() {
 		_ = writer.writeJSON(map[string]any{"type": "remote.error", "message": "Remote control is disabled on this agent"})
-		return
-	}
-	if reason := hostguard.RemoteControlBlockedReason(flags.Endpoint); reason != "" {
-		_ = writer.writeJSON(map[string]any{"type": "remote.error", "message": reason})
 		return
 	}
 	impl, err := newTerminalImpl()
@@ -91,23 +85,16 @@ func StartRemoteSession(conn *websocket.Conn) {
 					_ = writer.writeJSON(map[string]any{"type": "heartbeat"})
 				default:
 					if isFileMessage(command.Type) {
-						manager.handle(payload)
+						manager.enqueue(payload)
 					}
 				}
 			}
 		}
 	}()
-	guardTicker := time.NewTicker(15 * time.Second)
-	defer guardTicker.Stop()
 	for {
 		select {
 		case <-errCh:
 			return
-		case <-guardTicker.C:
-			if reason := hostguard.RemoteControlBlockedReason(flags.Endpoint); reason != "" {
-				_ = writer.writeJSON(map[string]any{"type": "remote.error", "message": reason})
-				return
-			}
 		}
 	}
 }

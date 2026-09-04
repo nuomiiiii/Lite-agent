@@ -20,8 +20,8 @@ var testTargets = []struct {
 
 func requireNetworkIntegration(t *testing.T) {
 	t.Helper()
-	if os.Getenv("KOMARI_AGENT_INTEGRATION") != "1" {
-		t.Skip("set KOMARI_AGENT_INTEGRATION=1 to run public network tests")
+	if os.Getenv("LITE_AGENT_INTEGRATION") != "1" {
+		t.Skip("set LITE_AGENT_INTEGRATION=1 to run public network tests")
 	}
 }
 

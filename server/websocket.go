@@ -34,17 +34,18 @@ var (
 const v2SeenEventLimit = 512
 
 const (
-	websocketHeartbeatInterval    = 30 * time.Second
-	websocketPongWait             = 60 * time.Second
-	websocketHandshakeAliveWait   = 10 * time.Second
-	websocketReconnectDelay       = 1500 * time.Millisecond
+	websocketHeartbeatInterval  = 30 * time.Second
+	websocketPongWait           = 60 * time.Second
+	websocketHandshakeAliveWait = 10 * time.Second
+	websocketReconnectDelay     = 1500 * time.Millisecond
+	remoteWebSocketReadLimit    = 2 << 20
 )
 
+var v2PullCapabilities = []string{"exec", "ping", "route", "message", "event", "remote", "files", "config"}
+
 type agentWebSocketSession struct {
-	conn           *ws.SafeConn
-	activeProtocol int
-	readDone       <-chan struct{}
-	nextProtocol   int
+	conn     *ws.SafeConn
+	readDone <-chan struct{}
 }
 
 func (s *agentWebSocketSession) drop(reason string) {
@@ -56,21 +57,13 @@ func (s *agentWebSocketSession) drop(reason string) {
 		s.conn = nil
 	}
 	s.readDone = nil
-	s.activeProtocol = 0
-	resetConnectionProtocolVersion()
-	if requestedProtocolVersion() >= 2 {
-		s.nextProtocol = 2
-	}
 }
 
-func (s *agentWebSocketSession) attach(conn *ws.SafeConn, protocol int) {
+func (s *agentWebSocketSession) attach(conn *ws.SafeConn) {
 	s.conn = conn
-	s.activeProtocol = protocol
-	s.nextProtocol = protocol
-	setConnectionProtocolVersion(protocol)
 	done := make(chan struct{})
 	s.readDone = done
-	go handleWebSocketMessages(conn, protocol, done)
+	go handleWebSocketMessages(conn, done)
 }
 
 func (s *agentWebSocketSession) dial() (shouldExit bool) {
@@ -79,49 +72,33 @@ func (s *agentWebSocketSession) dial() (shouldExit bool) {
 	}
 	log.Println("Attempting to connect to WebSocket...")
 	retry := 0
-	connectProtocol := s.nextProtocol
 	for retry <= flags.MaxRetries {
 		if retry > 0 {
 			log.Println("Retrying websocket connection, attempt:", retry)
 		}
-		conn, err := connectWebSocket(buildWebSocketEndpoint(connectProtocol))
+		conn, err := connectWebSocket(buildWebSocketEndpoint())
 		if err == nil {
-			s.attach(conn, connectProtocol)
+			s.attach(conn)
 			return false
-		} else if shouldFallbackToV1(connectProtocol, err) {
-			log.Printf("v2 WebSocket endpoint failed (%v), falling back to v1 until this connection is lost", err)
-			connectProtocol = 1
-			retry = 0
-			continue
-		} else {
-			log.Println("Failed to connect to WebSocket:", err)
 		}
+		log.Println("Failed to connect to WebSocket:", err)
 		retry++
 		time.Sleep(time.Duration(flags.ReconnectInterval) * time.Second)
 	}
 
 	log.Println("Max retries reached.")
-	if connectProtocol < 2 {
-		return true
-	}
-	conn, err := runPostFallback(buildWebSocketEndpoint(connectProtocol))
+	conn, err := runPostFallback(buildWebSocketEndpoint())
 	if err != nil {
-		if connectProtocol >= 2 && isV2ProtocolFailure(err) {
-			log.Printf("v2 POST fallback failed (%v), falling back to v1 until this connection is lost", err)
-			s.nextProtocol = 1
-			setConnectionProtocolVersion(1)
-			return false
-		}
 		log.Println("POST fallback stopped:", err)
 		return true
 	}
 	log.Println("WebSocket recovered from POST fallback")
-	s.attach(conn, connectProtocol)
+	s.attach(conn)
 	return false
 }
 
 func EstablishWebSocketConnection() {
-	session := &agentWebSocketSession{nextProtocol: requestedProtocolVersion()}
+	session := &agentWebSocketSession{}
 	defer session.drop("")
 
 	dataTicker := time.NewTicker(reportIntervalDuration())
@@ -143,10 +120,7 @@ func EstablishWebSocketConnection() {
 			if session.conn == nil {
 				continue
 			}
-			data := monitoring.GenerateReport()
-			if session.activeProtocol >= 2 {
-				data = v2.BuildReportPayload(data)
-			}
+			data := v2.BuildReportPayload(monitoring.GenerateReport())
 			if err := session.conn.WriteMessage(websocket.TextMessage, data); err != nil {
 				log.Println("Failed to send WebSocket message:", err)
 				session.drop("WebSocket write failed, reconnecting")
@@ -180,12 +154,8 @@ func EstablishWebSocketConnection() {
 	}
 }
 
-func buildWebSocketEndpoint(protocolVersion int) string {
-	path := "/api/clients/report"
-	if protocolVersion >= 2 {
-		path = "/api/clients/v2/rpc"
-	}
-	websocketEndpoint := strings.TrimSuffix(flags.Endpoint, "/") + path
+func buildWebSocketEndpoint() string {
+	websocketEndpoint := strings.TrimSuffix(flags.Endpoint, "/") + "/api/clients/v2/rpc"
 	websocketEndpoint = "ws" + strings.TrimPrefix(websocketEndpoint, "http")
 	if convertedEndpoint, err := utils.ConvertIDNToASCII(websocketEndpoint); err == nil {
 		return convertedEndpoint
@@ -199,8 +169,7 @@ func runPostFallback(websocketEndpoint string) (*ws.SafeConn, error) {
 	log.Println("Entering v2 POST fallback mode")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	pullErr := make(chan error, 1)
-	go runV2PullLoop(ctx, pullErr)
+	go runV2PullLoop(ctx)
 
 	reportTicker := time.NewTicker(reportIntervalDuration())
 	defer reportTicker.Stop()
@@ -214,9 +183,6 @@ func runPostFallback(websocketEndpoint string) (*ws.SafeConn, error) {
 			ackIDs := snapshotV2AckEventIDs()
 			resp, err := postV2Request(v2.BuildReportRequest(reportID, monitoring.GenerateReport(), ackIDs))
 			if err != nil {
-				if shouldFallbackToV1(2, err) {
-					return nil, err
-				}
 				log.Println("Failed to POST v2 report:", err)
 				continue
 			}
@@ -227,14 +193,9 @@ func runPostFallback(websocketEndpoint string) (*ws.SafeConn, error) {
 			if err == nil {
 				return conn, nil
 			}
-			if shouldFallbackToV1(2, err) {
-				return nil, err
-			}
 			log.Println("POST fallback WebSocket recovery failed:", err)
 		case <-runtimeconfig.Changes():
 			reportTicker.Reset(reportIntervalDuration())
-		case err := <-pullErr:
-			return nil, err
 		}
 	}
 }
@@ -243,7 +204,7 @@ func reportIntervalDuration() time.Duration {
 	return time.Duration(runtimeconfig.ReportInterval() * float64(time.Second))
 }
 
-func runV2PullLoop(ctx context.Context, errCh chan<- error) {
+func runV2PullLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -253,19 +214,12 @@ func runV2PullLoop(ctx context.Context, errCh chan<- error) {
 		pullID := fmt.Sprintf("pull-%d", time.Now().UnixNano())
 		ackIDs := snapshotV2AckEventIDs()
 		payload := v2.NewRequest(pullID, v2.MethodAgentPull, map[string]interface{}{
-			"capabilities":  []string{"exec", "ping", "route", "message", "event", "terminal", "files", "config"},
+			"capabilities":  v2PullCapabilities,
 			"ack_event_ids": ackIDs,
 		})
 		resp, err := postV2RequestContext(ctx, payload)
 		if err != nil {
 			if ctx.Err() != nil {
-				return
-			}
-			if shouldFallbackToV1(2, err) {
-				select {
-				case errCh <- err:
-				default:
-				}
 				return
 			}
 			log.Println("Failed to POST v2 pull:", err)
@@ -317,7 +271,6 @@ func postV2RequestContext(ctx context.Context, payload []byte) (*v2.Response, er
 	if err != nil {
 		return nil, err
 	}
-	resetV2ProtocolFailures(2)
 	return rpcResp, nil
 }
 
@@ -419,12 +372,12 @@ func connectWebSocket(websocketEndpoint string) (*ws.SafeConn, error) {
 	return ws.NewSafeConn(conn), nil
 }
 
-func handleWebSocketMessages(conn *ws.SafeConn, protocolVersion int, done chan<- struct{}) {
+func handleWebSocketMessages(conn *ws.SafeConn, done chan<- struct{}) {
 	defer close(done)
 	var alive atomic.Bool
 	markAlive := func() {
 		if alive.CompareAndSwap(false, true) {
-			log.Printf("WebSocket connected using v%d protocol", protocolVersion)
+			log.Printf("WebSocket connected using v2 protocol")
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(websocketPongWait))
 	}
@@ -449,44 +402,19 @@ func handleWebSocketMessages(conn *ws.SafeConn, protocolVersion int, done chan<-
 			Method  string      `json:"method,omitempty"`
 			Params  interface{} `json:"params,omitempty"`
 			ID      interface{} `json:"id,omitempty"`
-			Message string      `json:"message"`
-			// Terminal
-			TerminalId   string `json:"request_id,omitempty"`
-			RemoteTicket string `json:"remote_ticket,omitempty"`
-			// Remote Exec
-			ExecCommand string `json:"command,omitempty"`
-			ExecTaskID  string `json:"task_id,omitempty"`
-			// Ping
-			PingTaskID uint   `json:"ping_task_id,omitempty"`
-			PingType   string `json:"ping_type,omitempty"`
-			PingTarget string `json:"ping_target,omitempty"`
 		}
 		err = json.Unmarshal(message_raw, &message)
 		if err != nil {
 			log.Println("Bad ws message:", err)
 			continue
 		}
-		if message.JSONRPC == v2.Version && protocolVersion >= 2 {
-			eventID, _ := message.ID.(string)
-			processV2Event(conn, message.Method, message.Params, eventID)
+		if message.JSONRPC != v2.Version {
+			log.Printf("ignored non-v2 websocket message method=%q", message.Method)
 			continue
 		}
-
-		if message.Message == "remote" && message.TerminalId != "" && message.RemoteTicket != "" {
-			go establishRemoteConnection(flags.Token, message.TerminalId, message.RemoteTicket, flags.Endpoint)
-			continue
-		}
-		if message.Message == "terminal" || message.TerminalId != "" {
-			go establishTerminalConnection(flags.Token, message.TerminalId, flags.Endpoint)
-			continue
-		}
-		if message.Message == "exec" {
-			go NewTask(message.ExecTaskID, message.ExecCommand)
-			continue
-		}
-		if message.Message == "ping" || message.PingTaskID != 0 || message.PingType != "" || message.PingTarget != "" {
-			go NewPingTask(conn, protocolVersion, message.PingTaskID, message.PingType, message.PingTarget)
-			continue
+		eventID, _ := message.ID.(string)
+		if processV2Event(conn, message.Method, message.Params, eventID) {
+			addV2AckEventID(eventID)
 		}
 	}
 }
@@ -501,12 +429,20 @@ func processV2Event(conn *ws.SafeConn, method string, params interface{}, eventI
 			TaskID  string `json:"task_id"`
 			Command string `json:"command"`
 		}
-		if err := v2.BindParams(params, &p); err == nil {
-			go NewTask(p.TaskID, p.Command)
-			return true
-		} else {
+		if err := v2.BindParams(params, &p); err != nil {
+			forgetV2Event(eventID)
 			log.Printf("bad v2 exec params: %v", err)
+			return false
 		}
+		run, ack := acceptTask(p.TaskID)
+		if run {
+			go executeAcceptedTask(p.TaskID, p.Command)
+		}
+		if !ack {
+			forgetV2Event(eventID)
+			return false
+		}
+		return true
 	case v2.MethodAgentPing:
 		var p struct {
 			TaskID uint   `json:"ping_task_id"`
@@ -514,7 +450,7 @@ func processV2Event(conn *ws.SafeConn, method string, params interface{}, eventI
 			Target string `json:"ping_target"`
 		}
 		if err := v2.BindParams(params, &p); err == nil {
-			go NewPingTask(conn, 2, p.TaskID, p.Type, p.Target)
+			go NewPingTask(conn, p.TaskID, p.Type, p.Target)
 			return true
 		} else {
 			log.Printf("bad v2 ping params: %v", err)
@@ -526,16 +462,6 @@ func processV2Event(conn *ws.SafeConn, method string, params interface{}, eventI
 			return true
 		} else {
 			log.Printf("bad v2 route params: %v", err)
-		}
-	case v2.MethodAgentTerminal:
-		var p struct {
-			RequestID string `json:"request_id"`
-		}
-		if err := v2.BindParams(params, &p); err == nil {
-			go establishTerminalConnection(flags.Token, p.RequestID, flags.Endpoint)
-			return true
-		} else {
-			log.Printf("bad v2 terminal params: %v", err)
 		}
 	case v2.MethodAgentRemote:
 		var p v2.RemoteRequestParams
@@ -562,37 +488,6 @@ func processV2Event(conn *ws.SafeConn, method string, params interface{}, eventI
 	return false
 }
 
-// connectWebSocket attempts to establish a WebSocket connection and upload basic info
-
-// establishTerminalConnection 建立终端连接并使用terminal包处理终端操作
-func establishTerminalConnection(token, id, endpoint string) {
-	endpoint = strings.TrimSuffix(endpoint, "/") + "/api/clients/terminal"
-	endpoint = "ws" + strings.TrimPrefix(endpoint, "http")
-
-	// 转换中文域名为 ASCII 兼容编码
-	if convertedEndpoint, err := utils.ConvertIDNToASCII(endpoint); err == nil {
-		endpoint = convertedEndpoint
-	} else {
-		log.Printf("Warning: Failed to convert Terminal WebSocket IDN to ASCII: %v", err)
-	}
-
-	// 使用与主 WS 相同的拨号策略
-	dialer := newWSDialer()
-
-	headers := terminalAuthorizationHeader(token, id)
-	conn, _, err := dialer.Dial(endpoint, headers)
-	if err != nil {
-		log.Println("Failed to establish terminal connection:", err)
-		return
-	}
-
-	// 启动终端
-	terminal.StartTerminal(conn)
-	if conn != nil {
-		conn.Close()
-	}
-}
-
 func establishRemoteConnection(token, id, ticket, endpoint string) {
 	endpoint = strings.TrimSuffix(endpoint, "/") + "/api/clients/remote"
 	endpoint = "ws" + strings.TrimPrefix(endpoint, "http")
@@ -607,6 +502,7 @@ func establishRemoteConnection(token, id, ticket, endpoint string) {
 		log.Println("Failed to establish remote connection:", err)
 		return
 	}
+	conn.SetReadLimit(remoteWebSocketReadLimit)
 	terminal.StartRemoteSession(conn)
 	_ = conn.Close()
 }

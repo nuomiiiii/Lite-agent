@@ -29,7 +29,7 @@ func TestBuildMotdShellCommandUsesPOSIXShell(t *testing.T) {
 		t.Fatalf("expected MOTD prelude to run with /bin/sh, got %q", cmd.Path)
 	}
 
-	wantArgs := []string{"/bin/sh", "-c", motdShellPrelude, "komari-motd", userShell}
+	wantArgs := []string{"/bin/sh", "-c", motdShellPrelude, "lite-motd", userShell}
 	if !reflect.DeepEqual(cmd.Args, wantArgs) {
 		t.Fatalf("unexpected command args:\nwant %#v\n got %#v", wantArgs, cmd.Args)
 	}

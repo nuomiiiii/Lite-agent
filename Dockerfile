@@ -17,5 +17,5 @@ RUN touch /.lite-agent-container /.komari-agent-container
 ENTRYPOINT ["/app/Lite-agent"]
 # 运行时请指定参数
 # Please specify parameters at runtime.
-# eg: docker run lite-agent -e example.com -t token
+# eg: docker run lite-agent -e example.com -t token --enable-remote-control=false
 CMD ["--help"]

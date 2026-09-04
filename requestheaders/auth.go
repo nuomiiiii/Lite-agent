@@ -18,7 +18,7 @@ func ApplyCloudflareAccess(headers http.Header, clientID, clientSecret string) {
 	headers.Set(cloudflareAccessClientSecretHeader, clientSecret)
 }
 
-// ApplyAgentAuthentication keeps Komari authentication separate from the
+// ApplyAgentAuthentication keeps Lite agent authentication separate from the
 // Cloudflare Access service token. Both authentication layers can coexist on
 // the same HTTP or WebSocket handshake.
 func ApplyAgentAuthentication(headers http.Header, token, clientID, clientSecret string) {

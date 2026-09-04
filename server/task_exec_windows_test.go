@@ -31,8 +31,12 @@ func TestBuildTaskCommandCreatesPowerShellScriptWindows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected temp script to exist: %v", err)
 	}
-	if !strings.Contains(string(content), "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8") {
-		t.Fatalf("expected UTF-8 output prelude in temp script, got %q", string(content))
+	script := string(content)
+	if !strings.Contains(script, "[Console]::OutputEncoding = $nativeEncoding") {
+		t.Fatalf("expected native console encoding prelude in temp script, got %q", script)
+	}
+	if !strings.Contains(script, "$OutputEncoding = [System.Text.Encoding]::UTF8") {
+		t.Fatalf("expected UTF-8 pipe encoding prelude in temp script, got %q", script)
 	}
 	if !strings.Contains(string(content), "Write-Output 'hello'") {
 		t.Fatalf("expected command body in temp script, got %q", string(content))

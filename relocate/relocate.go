@@ -6,7 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
+
+	"github.com/nuomiiiii/lite-agent/remotecontrol"
 )
 
 type spec struct {
@@ -96,6 +99,9 @@ func doRelocate(goos string, args, environ []string, ctrl controller) (bool, err
 		if err := copySidecars(planned.From.Dir, planned.To.Dir, goos, sidecarExtras(args, collected)); err != nil {
 			return false, err
 		}
+		if err := seedRemoteControlState(planned.To.Dir, collected.Args, args); err != nil {
+			log.Printf("persist remote-control state during relocate: %v", err)
+		}
 		_ = ctrl.PreventRestart(planned.From.Service)
 		if err := ctrl.DisableNoStop(planned.From.Service); err != nil {
 			log.Printf("disable %s: %v", planned.From.Service, err)
@@ -137,6 +143,9 @@ func doRelocate(goos string, args, environ []string, ctrl controller) (bool, err
 		Environment:      rewriteEnv(env, planned.From.Dir, planned.To.Dir, goos),
 		EnvironmentFiles: rewriteEnvFiles(collected.EnvironmentFiles, planned.From.Dir, planned.To.Dir, goos),
 		PlistLabel:       planned.To.PlistLabel,
+	}
+	if err := seedRemoteControlState(planned.To.Dir, next.Args, launchArgs); err != nil {
+		log.Printf("persist remote-control state during relocate: %v", err)
 	}
 	if err := ctrl.Install(next); err != nil {
 		return false, fmt.Errorf("install %s: %w", next.Name, err)
@@ -209,4 +218,58 @@ func waitRunning(ctrl controller, name string, timeout time.Duration) bool {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return ctrl.Running(name)
+}
+
+func seedRemoteControlState(newDir string, argSets ...[]string) error {
+	path := filepath.Join(newDir, remotecontrol.StateFileName)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	var args []string
+	for _, set := range argSets {
+		args = append(args, set...)
+	}
+	if argsHaveNamedFlag(args, "enable-remote-control") {
+		return nil
+	}
+	enabled := true
+	if argsHaveNamedFlag(args, "disable-web-ssh") {
+		enabled = !argsNamedBool(args, "disable-web-ssh")
+	}
+	return remotecontrol.WriteAtomic(path, enabled)
+}
+
+func argsHaveNamedFlag(args []string, name string) bool {
+	prefix := "--" + name
+	for _, arg := range args {
+		if arg == prefix || strings.HasPrefix(arg, prefix+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+func argsNamedBool(args []string, name string) bool {
+	prefix := "--" + name
+	for i, arg := range args {
+		if arg == prefix {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				return boolFlagIsTrue(args[i+1])
+			}
+			return true
+		}
+		if strings.HasPrefix(arg, prefix+"=") {
+			return boolFlagIsTrue(strings.TrimPrefix(arg, prefix+"="))
+		}
+	}
+	return true
+}
+
+func boolFlagIsTrue(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return true
+	}
 }

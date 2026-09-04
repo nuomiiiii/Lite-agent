@@ -22,9 +22,17 @@ import (
 )
 
 const (
-	maxFileTransferSize = int64(2 << 30)
-	maxFileChunkSize    = 384 << 10
-	downloadChunkSize   = 256 << 10
+	maxFileTransferSize    = int64(2 << 30)
+	maxFileChunkSize       = 384 << 10
+	downloadChunkSize      = 256 << 10
+	maxConcurrentUploads   = 2
+	maxConcurrentDownloads = 2
+)
+
+var (
+	fileWorkerCount  = 2
+	fileQueueSize    = 8
+	maxListJSONBytes = (2 << 20) - 128<<10
 )
 
 type fileRequest struct {
@@ -38,6 +46,8 @@ type fileRequest struct {
 	Size        int64  `json:"size,omitempty"`
 	Overwrite   bool   `json:"overwrite,omitempty"`
 	Recursive   bool   `json:"recursive,omitempty"`
+	Offset      int    `json:"offset,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
 }
 
 type fileEntry struct {
@@ -68,29 +78,83 @@ type fileResponseWriter interface {
 }
 
 type fileManager struct {
-	writer  fileResponseWriter
-	ctx     context.Context
-	cancel  context.CancelFunc
-	mu      sync.Mutex
-	uploads map[string]*uploadState
+	writer              fileResponseWriter
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	mu                  sync.Mutex
+	uploads             map[string]*uploadState
+	jobs                chan []byte
+	closed              bool
+	uploadCount         int
+	reservedUploadBytes int64
+	activeDownloads     int
+	beforeHandle        func()
 }
 
 func newFileManager(writer fileResponseWriter) *fileManager {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &fileManager{writer: writer, ctx: ctx, cancel: cancel, uploads: make(map[string]*uploadState)}
+	manager := &fileManager{
+		writer:  writer,
+		ctx:     ctx,
+		cancel:  cancel,
+		uploads: make(map[string]*uploadState),
+		jobs:    make(chan []byte, fileQueueSize),
+	}
+	for i := 0; i < fileWorkerCount; i++ {
+		go manager.worker()
+	}
+	return manager
 }
 
 func (manager *fileManager) close() {
 	manager.cancel()
 	manager.mu.Lock()
+	manager.closed = true
 	uploads := manager.uploads
 	manager.uploads = make(map[string]*uploadState)
+	manager.uploadCount = 0
+	manager.reservedUploadBytes = 0
+	manager.activeDownloads = 0
 	manager.mu.Unlock()
 	for _, upload := range uploads {
 		upload.mu.Lock()
 		_ = upload.file.Close()
 		_ = os.Remove(upload.tempPath)
 		upload.mu.Unlock()
+	}
+}
+
+func (manager *fileManager) worker() {
+	for {
+		select {
+		case <-manager.ctx.Done():
+			return
+		case payload, ok := <-manager.jobs:
+			if !ok {
+				return
+			}
+			if manager.beforeHandle != nil {
+				manager.beforeHandle()
+			}
+			manager.handle(payload)
+		}
+	}
+}
+
+func (manager *fileManager) enqueue(payload []byte) {
+	copied := append([]byte(nil), payload...)
+	manager.mu.Lock()
+	closed := manager.closed
+	manager.mu.Unlock()
+	if closed {
+		return
+	}
+	select {
+	case manager.jobs <- copied:
+	default:
+		var request fileRequest
+		_ = json.Unmarshal(copied, &request)
+		manager.respond(request, nil, errors.New("file manager is busy"))
 	}
 }
 
@@ -123,8 +187,19 @@ func (manager *fileManager) handle(payload []byte) {
 		manager.uploadChunk(request)
 	case "file.upload.finish":
 		manager.finishUpload(request)
+	case "file.upload.cancel":
+		manager.cancelUpload(request)
 	case "file.download":
-		go manager.download(request)
+		if !manager.tryBeginDownload() {
+			_ = manager.writer.writeJSON(map[string]any{
+				"type": "file.download.error", "id": request.ID, "error": "too many concurrent downloads",
+			})
+			return
+		}
+		go func() {
+			defer manager.endDownload()
+			manager.download(request)
+		}()
 	default:
 		manager.respond(request, nil, errors.New("unsupported file operation"))
 	}
@@ -137,10 +212,11 @@ func (manager *fileManager) respond(request fileRequest, data any, err error) {
 		"operation": request.Type,
 		"ok":        err == nil,
 	}
+	if data != nil {
+		response["data"] = data
+	}
 	if err != nil {
 		response["error"] = err.Error()
-	} else if data != nil {
-		response["data"] = data
 	}
 	_ = manager.writer.writeJSON(response)
 }
@@ -225,12 +301,71 @@ func (manager *fileManager) list(request fileRequest) {
 		}
 		return strings.ToLower(result[left].Name) < strings.ToLower(result[right].Name)
 	})
-	manager.respond(request, map[string]any{
-		"path":    path,
-		"parent":  parentFilePath(path),
-		"roots":   filesystemRoots(),
-		"entries": result,
-	}, nil)
+	total := len(result)
+	offset := request.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+	page := result[offset:]
+	if request.Limit > 0 && request.Limit < len(page) {
+		page = page[:request.Limit]
+	}
+	parent := parentFilePath(path)
+	page, truncated := fitFileListEntries(path, parent, offset, total, page)
+	data := map[string]any{
+		"path":      path,
+		"parent":    parent,
+		"roots":     filesystemRoots(),
+		"entries":   page,
+		"offset":    offset,
+		"total":     total,
+		"truncated": truncated,
+	}
+	var listErr error
+	if truncated {
+		listErr = errors.New("directory listing truncated")
+	}
+	manager.respond(request, data, listErr)
+}
+
+func fitFileListEntries(path, parent string, offset, total int, entries []fileEntry) ([]fileEntry, bool) {
+	truncated := false
+	for {
+		payload := map[string]any{
+			"path":      path,
+			"parent":    parent,
+			"roots":     filesystemRoots(),
+			"entries":   entries,
+			"offset":    offset,
+			"total":     total,
+			"truncated": truncated,
+		}
+		encoded, err := json.Marshal(payload)
+		if err == nil && len(encoded) <= maxListJSONBytes {
+			return entries, truncated
+		}
+		if len(entries) == 0 {
+			return entries, true
+		}
+		truncated = true
+		next := len(entries) - 1
+		if len(encoded) > 0 {
+			shrunk := len(entries) * maxListJSONBytes / len(encoded)
+			if shrunk < next {
+				next = shrunk
+			}
+		}
+		if next < 0 {
+			next = 0
+		}
+		if next >= len(entries) {
+			next = len(entries) - 1
+		}
+		entries = entries[:next]
+	}
 }
 
 func (manager *fileManager) mkdir(request fileRequest) {
@@ -487,6 +622,45 @@ func newTransferID() (string, error) {
 	return hex.EncodeToString(buffer), nil
 }
 
+func (manager *fileManager) tryBeginDownload() bool {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if manager.closed || manager.activeDownloads >= maxConcurrentDownloads {
+		return false
+	}
+	manager.activeDownloads++
+	return true
+}
+
+func (manager *fileManager) endDownload() {
+	manager.mu.Lock()
+	if manager.activeDownloads > 0 {
+		manager.activeDownloads--
+	}
+	manager.mu.Unlock()
+}
+
+func (manager *fileManager) releaseUploadReservationLocked(size int64) {
+	manager.uploadCount--
+	manager.reservedUploadBytes -= size
+	if manager.uploadCount < 0 {
+		manager.uploadCount = 0
+	}
+	if manager.reservedUploadBytes < 0 {
+		manager.reservedUploadBytes = 0
+	}
+}
+
+func (manager *fileManager) forgetUploadLocked(uploadID string) *uploadState {
+	upload := manager.uploads[uploadID]
+	if upload == nil {
+		return nil
+	}
+	delete(manager.uploads, uploadID)
+	manager.releaseUploadReservationLocked(upload.expected)
+	return upload
+}
+
 func (manager *fileManager) startUpload(request fileRequest) {
 	target, err := normalizeFilePath(request.Path)
 	if err == nil {
@@ -495,10 +669,11 @@ func (manager *fileManager) startUpload(request fileRequest) {
 	if err == nil && (request.Size < 0 || request.Size > maxFileTransferSize) {
 		err = fmt.Errorf("file exceeds the %d byte transfer limit", maxFileTransferSize)
 	}
-	var tempFile *os.File
-	if err == nil {
-		tempFile, err = os.CreateTemp(filepath.Dir(target), ".lite-upload-*")
+	if err != nil {
+		manager.respond(request, nil, err)
+		return
 	}
+	tempFile, err := os.CreateTemp(filepath.Dir(target), ".lite-upload-*")
 	if err != nil {
 		manager.respond(request, nil, err)
 		return
@@ -512,6 +687,29 @@ func (manager *fileManager) startUpload(request fileRequest) {
 		return
 	}
 	manager.mu.Lock()
+	if manager.closed {
+		manager.mu.Unlock()
+		_ = tempFile.Close()
+		_ = os.Remove(tempFile.Name())
+		manager.respond(request, nil, errors.New("file manager is closed"))
+		return
+	}
+	if manager.uploadCount >= maxConcurrentUploads {
+		manager.mu.Unlock()
+		_ = tempFile.Close()
+		_ = os.Remove(tempFile.Name())
+		manager.respond(request, nil, errors.New("too many concurrent uploads"))
+		return
+	}
+	if manager.reservedUploadBytes+request.Size > maxFileTransferSize {
+		manager.mu.Unlock()
+		_ = tempFile.Close()
+		_ = os.Remove(tempFile.Name())
+		manager.respond(request, nil, errors.New("session upload size exceeds the transfer limit"))
+		return
+	}
+	manager.uploadCount++
+	manager.reservedUploadBytes += request.Size
 	manager.uploads[uploadID] = &uploadState{
 		file: tempFile, tempPath: tempFile.Name(), target: target,
 		expected: request.Size, overwrite: request.Overwrite, hash: sha256.New(),
@@ -550,8 +748,7 @@ func (manager *fileManager) uploadChunk(request fileRequest) {
 
 func (manager *fileManager) finishUpload(request fileRequest) {
 	manager.mu.Lock()
-	upload := manager.uploads[request.UploadID]
-	delete(manager.uploads, request.UploadID)
+	upload := manager.forgetUploadLocked(request.UploadID)
 	manager.mu.Unlock()
 	if upload == nil {
 		manager.respond(request, nil, errors.New("upload session not found"))
@@ -593,6 +790,21 @@ func (manager *fileManager) finishUpload(request fileRequest) {
 	}
 	cleanup = false
 	manager.respond(request, map[string]any{"sha256": actualHash, "size": upload.received}, nil)
+}
+
+func (manager *fileManager) cancelUpload(request fileRequest) {
+	manager.mu.Lock()
+	upload := manager.forgetUploadLocked(request.UploadID)
+	manager.mu.Unlock()
+	if upload == nil {
+		manager.respond(request, nil, errors.New("upload session not found"))
+		return
+	}
+	upload.mu.Lock()
+	_ = upload.file.Close()
+	_ = os.Remove(upload.tempPath)
+	upload.mu.Unlock()
+	manager.respond(request, nil, nil)
 }
 
 func replaceUploadedFile(tempPath, target string, overwrite bool) error {

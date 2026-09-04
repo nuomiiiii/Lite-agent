@@ -3,7 +3,8 @@ package flags_pkg
 type Config struct {
 	AutoDiscoveryKey     string  `json:"auto_discovery_key" env:"AGENT_AUTO_DISCOVERY_KEY"`           // 自动发现密钥
 	DisableAutoUpdate    bool    `json:"disable_auto_update" env:"AGENT_DISABLE_AUTO_UPDATE"`         // 禁用自动更新
-	DisableWebSsh        bool    `json:"disable_web_ssh" env:"AGENT_DISABLE_WEB_SSH"`                 // 禁用远程控制（web ssh 和 rce）
+	RemoteControlEnabled bool    `json:"remote_control_enabled" env:"AGENT_REMOTE_CONTROL_ENABLED"`   // 启用远程控制（终端、文件、exec）
+	DisableWebSsh        bool    `json:"disable_web_ssh" env:"AGENT_DISABLE_WEB_SSH"`                 // 隐藏迁移输入：旧版禁用远程控制
 	MemoryModeAvailable  bool    `json:"memory_mode_available" env:"AGENT_MEMORY_MODE_AVAILABLE"`     // [deprecated] 已弃用，请使用 MemoryIncludeCache
 	Token                string  `json:"token" env:"AGENT_TOKEN"`                                     // Token
 	Endpoint             string  `json:"endpoint" env:"AGENT_ENDPOINT"`                               // 面板地址
@@ -28,10 +29,16 @@ type Config struct {
 	GetIpAddrFromNic     bool    `json:"get_ip_addr_from_nic" env:"AGENT_GET_IP_ADDR_FROM_NIC"`       // 从网卡获取IP地址
 	HostProc             string  `json:"host_proc" env:"HOST_PROC"`                                   // 容器环境下宿主机/proc目录的挂载点，用于监控宿主机进程
 	ConfigFile           string  `json:"config_file" env:"AGENT_CONFIG_FILE"`                         // JSON配置文件路径
-	ProtocolVersion      int     `json:"protocol_version" env:"AGENT_PROTOCOL_VERSION"`               // 上报协议版本，默认2
+	ProtocolVersion      int     `json:"protocol_version" env:"AGENT_PROTOCOL_VERSION"`               // 上报协议版本，仅支持 2
 	DisableCompression   bool    `json:"disable_compression" env:"AGENT_DISABLE_COMPRESSION"`         // 禁用v2传输压缩
 	PreferIPVersion      string  `json:"prefer_ip_version" env:"AGENT_PREFER_IP_VERSION"`             // 面板连接优先使用的 IP 版本：4 或 6
 
 }
 
 var GlobalConfig = &Config{}
+
+// RemoteControlEnabled reports whether remote terminal, files, and exec are on.
+// This is the runtime source of truth; do not check DisableWebSsh after config load.
+func RemoteControlEnabled() bool {
+	return GlobalConfig != nil && GlobalConfig.RemoteControlEnabled
+}

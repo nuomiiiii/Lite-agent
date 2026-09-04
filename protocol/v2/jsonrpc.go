@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
-
-	v1 "github.com/nuomiiiii/lite-agent/protocol/v1"
 )
 
 const (
@@ -20,11 +18,13 @@ const (
 	MethodAgentRoute        = "agent.route"
 	MethodAgentMessage      = "agent.message"
 	MethodAgentEvent        = "agent.event"
-	MethodAgentTerminal     = "agent.terminal.request"
 	MethodAgentRemote       = "agent.remote.request"
 	MethodAgentConfig       = "agent.config"
 	MethodAgentConfigResult = "agent.configResult"
 	MethodAgentPull         = "agent.pull"
+
+	TaskResultStatusFinished    = "finished"
+	TaskResultStatusInterrupted = "interrupted"
 )
 
 type Request struct {
@@ -115,11 +115,11 @@ func NewRequest(id interface{}, method string, params interface{}) []byte {
 	return payload
 }
 
-func BuildReportPayload(report v1.ReportPayload) []byte {
+func BuildReportPayload(report []byte) []byte {
 	return NewNotification(MethodAgentReport, reportParams{Report: json.RawMessage(report)})
 }
 
-func BuildReportRequest(id interface{}, report v1.ReportPayload, ackEventIDs []string) []byte {
+func BuildReportRequest(id interface{}, report []byte, ackEventIDs []string) []byte {
 	return NewRequest(id, MethodAgentReport, reportParams{Report: json.RawMessage(report), AckEventIDs: ackEventIDs})
 }
 
@@ -147,6 +147,23 @@ func BuildPingResultPayload(taskID uint, pingType string, value int, finishedAt 
 			"value":       value,
 			"finished_at": finishedAt.Format(time.RFC3339Nano),
 		},
+	}
+}
+
+func BuildTaskResultPayload(taskID, result string, exitCode int, finishedAt time.Time, status string) interface{} {
+	params := map[string]interface{}{
+		"task_id":     taskID,
+		"result":      result,
+		"exit_code":   exitCode,
+		"finished_at": finishedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if status != "" {
+		params["status"] = status
+	}
+	return Request{
+		JSONRPC: Version,
+		Method:  MethodAgentTaskResult,
+		Params:  params,
 	}
 }
 

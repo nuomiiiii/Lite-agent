@@ -105,7 +105,7 @@ func newTerminalImpl() (*terminalImpl, error) {
 const motdShellPrelude = "for f in /etc/update-motd.d/*; do [ -e \"$f\" ] && [ -x \"$f\" ] && \"$f\"; done; [ -r /etc/motd ] && cat /etc/motd; exec \"$1\""
 
 func buildMotdShellCommand(shell string) *exec.Cmd {
-	return exec.Command("/bin/sh", "-c", motdShellPrelude, "komari-motd", shell)
+	return exec.Command("/bin/sh", "-c", motdShellPrelude, "lite-motd", shell)
 }
 
 func terminalWorkingDirectory() string {

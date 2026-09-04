@@ -14,34 +14,320 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
+	pkg_flags "github.com/nuomiiiii/lite-agent/cmd/flags"
 	"github.com/nuomiiiii/lite-agent/dnsresolver"
-	"github.com/nuomiiiii/lite-agent/hostguard"
 	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
+	"github.com/nuomiiiii/lite-agent/tasklog"
 	"github.com/nuomiiiii/lite-agent/ws"
 	ping "github.com/prometheus-community/pro-bing"
 )
 
+var execLog *tasklog.Log
+
+var (
+	recoverWorkerCount       = 4
+	finishPersistMaxAttempts = 5
+	recoverMaxBackoff        = 5 * time.Minute
+)
+
+type taskResultUploader func(taskID, result string, exitCode int, finishedAt time.Time, status string) bool
+
+var (
+	uploadTaskResultFn = defaultUploadTaskResult
+	finishRetryDelay   func(attempt int) time.Duration
+	recoveryMu         sync.Mutex
+	recoveryStarted    bool
+	recoverMinSleep    = time.Second
+)
+
+func SetTaskLog(store *tasklog.Log) {
+	execLog = store
+}
+
+func StartTaskRecovery(ctx context.Context) {
+	recoveryMu.Lock()
+	defer recoveryMu.Unlock()
+	if recoveryStarted || execLog == nil {
+		return
+	}
+	recoveryStarted = true
+	go recoverLoop(ctx, execLog)
+}
+
+func resetTaskRecoveryForTest() {
+	recoveryMu.Lock()
+	recoveryStarted = false
+	recoveryMu.Unlock()
+}
+
+func recoverLoop(ctx context.Context, store *tasklog.Log) {
+	if store == nil {
+		return
+	}
+	backoff := recoverBackoff(0)
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		if strings.TrimSpace(flags.Token) == "" {
+			if !sleepCtx(ctx, backoff) {
+				return
+			}
+			backoff = nextRecoverBackoff(backoff)
+			continue
+		}
+		recoverPendingReportsWith(ctx, store, uploadTaskResult)
+		if len(store.PendingReports()) == 0 {
+			backoff = recoverBackoff(0)
+		} else {
+			backoff = nextRecoverBackoff(backoff)
+		}
+		if !sleepCtx(ctx, backoff) {
+			return
+		}
+	}
+}
+
+func recoverBackoff(attempt int) time.Duration {
+	delay := time.Duration(flags.ReconnectInterval) * time.Second
+	if delay <= 0 {
+		delay = recoverMinSleep
+	}
+	for i := 0; i < attempt; i++ {
+		delay *= 2
+		if delay > recoverMaxBackoff {
+			return recoverMaxBackoff
+		}
+	}
+	return delay
+}
+
+func nextRecoverBackoff(current time.Duration) time.Duration {
+	if current <= 0 {
+		return recoverBackoff(0)
+	}
+	next := current * 2
+	if next > recoverMaxBackoff {
+		return recoverMaxBackoff
+	}
+	return next
+}
+
+func sleepCtx(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		delay = time.Second
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func recoverInterruptedTasks(store *tasklog.Log) {
+	recoverPendingReportsWith(context.Background(), store, uploadTaskResult)
+}
+
+func recoverInterruptedTasksWith(store *tasklog.Log, upload taskResultUploader) {
+	recoverPendingReportsWith(context.Background(), store, upload)
+}
+
+func recoverPendingReportsWith(ctx context.Context, store *tasklog.Log, upload taskResultUploader) {
+	if store == nil || upload == nil {
+		return
+	}
+	entries := store.PendingReports()
+	if len(entries) == 0 {
+		return
+	}
+	workers := recoverWorkerCount
+	if workers < 2 {
+		workers = 2
+	}
+	if workers > 4 {
+		workers = 4
+	}
+	jobs := make(chan tasklog.Entry)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for entry := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				finishedAt := entry.FinishedAt
+				if finishedAt.IsZero() {
+					finishedAt = time.Now().UTC()
+				}
+				summary := entry.Summary
+				status := v2.TaskResultStatusInterrupted
+				if entry.State == tasklog.StateFinished {
+					status = v2.TaskResultStatusFinished
+				} else if summary == "" {
+					summary = "execution status unknown"
+				}
+				if !upload(entry.TaskID, summary, entry.ExitCode, finishedAt, status) {
+					continue
+				}
+				if err := store.Ack(entry.TaskID); err != nil {
+					log.Printf("task log ack %s: %v", entry.TaskID, err)
+				}
+			}
+		}()
+	}
+	for _, entry := range entries {
+		select {
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			return
+		case jobs <- entry:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+}
+
+func acceptTask(taskID string) (run bool, ack bool) {
+	if taskID == "" {
+		return false, false
+	}
+	if execLog == nil {
+		return true, true
+	}
+	entry, err := execLog.Begin(taskID)
+	if err == nil {
+		return true, true
+	}
+	if errors.Is(err, tasklog.ErrAlreadyFinished) {
+		if !entry.Acked {
+			finishedAt := entry.FinishedAt
+			if finishedAt.IsZero() {
+				finishedAt = time.Now().UTC()
+			}
+			if uploadTaskResult(taskID, entry.Summary, entry.ExitCode, finishedAt, v2.TaskResultStatusFinished) {
+				if ackErr := execLog.Ack(taskID); ackErr != nil {
+					log.Printf("task log ack %s: %v", taskID, ackErr)
+				}
+			}
+		}
+		return false, true
+	}
+	if errors.Is(err, tasklog.ErrAlreadyStarted) {
+		return false, true
+	}
+	if errors.Is(err, tasklog.ErrInterrupted) {
+		if !entry.Acked {
+			summary := entry.Summary
+			if summary == "" {
+				summary = "execution status unknown"
+			}
+			finishedAt := entry.FinishedAt
+			if finishedAt.IsZero() {
+				finishedAt = time.Now().UTC()
+			}
+			if uploadTaskResult(taskID, summary, entry.ExitCode, finishedAt, v2.TaskResultStatusInterrupted) {
+				if ackErr := execLog.Ack(taskID); ackErr != nil {
+					log.Printf("task log ack %s: %v", taskID, ackErr)
+				}
+			}
+		}
+		return false, true
+	}
+	if errors.Is(err, tasklog.ErrLogFull) {
+		log.Printf("task log begin %s: task log is full", taskID)
+		return false, false
+	}
+	log.Printf("task log begin %s: %v", taskID, err)
+	return false, false
+}
+
 func NewTask(task_id, command string) {
-	if task_id == "" {
+	run, _ := acceptTask(task_id)
+	if !run {
 		return
 	}
+	executeAcceptedTask(task_id, command)
+}
+
+func executeAcceptedTask(task_id, command string) {
 	if strings.TrimSpace(command) == "" {
-		uploadTaskResult(task_id, "No command provided", 0, time.Now())
+		finishTask(task_id, "No command provided", 0)
 		return
 	}
-	if flags.DisableWebSsh {
-		uploadTaskResult(task_id, "Remote control is disabled.", -1, time.Now())
+	if !pkg_flags.RemoteControlEnabled() {
+		finishTask(task_id, "Remote control is disabled.", -1)
 		return
 	}
-	if reason := hostguard.RemoteControlBlockedReason(flags.Endpoint); reason != "" {
-		uploadTaskResult(task_id, reason, -1, time.Now())
+	if len(command) > 64<<10 {
+		finishTask(task_id, "Command is too long", -1)
 		return
 	}
-	log.Printf("Executing task %s with command: %s", task_id, command)
+	log.Printf("Executing task %s", task_id)
 	result, exitCode := runTaskCommand(command)
-	uploadTaskResult(task_id, result, exitCode, time.Now())
+	finishTask(task_id, result, exitCode)
+}
+
+func finishTask(taskID, result string, exitCode int) {
+	finishedAt := time.Now().UTC()
+	persisted := false
+	if execLog != nil {
+		entry, err := persistTaskFinish(taskID, result, exitCode)
+		if err != nil {
+			log.Printf("task log finish %s: 本地完成状态持久化失败", taskID)
+		} else {
+			persisted = true
+			if !entry.FinishedAt.IsZero() {
+				finishedAt = entry.FinishedAt
+			}
+		}
+	}
+	if uploadTaskResult(taskID, result, exitCode, finishedAt, v2.TaskResultStatusFinished) && persisted {
+		if err := execLog.Ack(taskID); err != nil {
+			log.Printf("task log ack %s: %v", taskID, err)
+		}
+	}
+}
+
+func persistTaskFinish(taskID, result string, exitCode int) (tasklog.Entry, error) {
+	var last error
+	for attempt := 0; attempt < finishPersistMaxAttempts; attempt++ {
+		entry, err := execLog.Finish(taskID, result, exitCode)
+		if err == nil {
+			return entry, nil
+		}
+		last = err
+		log.Printf("task log finish %s attempt %d: %v", taskID, attempt+1, err)
+		if delay := finishRetrySleep(attempt); delay > 0 {
+			time.Sleep(delay)
+		}
+	}
+	return tasklog.Entry{}, last
+}
+
+func finishRetrySleep(attempt int) time.Duration {
+	if finishRetryDelay != nil {
+		return finishRetryDelay(attempt)
+	}
+	delay := time.Duration(flags.ReconnectInterval) * time.Second
+	if delay <= 0 {
+		delay = time.Second
+	}
+	for i := 0; i < attempt; i++ {
+		delay *= 2
+		if delay > 30*time.Second {
+			return 30 * time.Second
+		}
+	}
+	return delay
 }
 
 func runTaskCommand(command string) (string, int) {
@@ -57,11 +343,19 @@ func runTaskCommand(command string) (string, int) {
 
 	err = cmd.Run()
 
-	result := stdout.String()
+	result := decodeCommandOutput(stdout.Bytes())
 	if stderr.Len() > 0 {
-		result = appendErrorResult(result, stderr.String())
+		result = appendErrorResult(result, decodeCommandOutput(stderr.Bytes()))
 	}
 	result = strings.ReplaceAll(result, "\r\n", "\n")
+	const maxResultBytes = 1 << 20
+	if len(result) > maxResultBytes {
+		result = result[:maxResultBytes]
+		for len(result) > 0 && result[len(result)-1]&0xc0 == 0x80 {
+			result = result[:len(result)-1]
+		}
+		result += "\n[truncated]"
+	}
 	exitCode := 0
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
@@ -78,7 +372,7 @@ func runTaskCommand(command string) (string, int) {
 func buildTaskCommand(command string) (*exec.Cmd, func(), error) {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		scriptFile, err := os.CreateTemp("", "komari-task-*.ps1")
+		scriptFile, err := os.CreateTemp("", "lite-agent-task-*.ps1")
 		if err != nil {
 			return nil, func() {}, err
 		}
@@ -90,7 +384,12 @@ func buildTaskCommand(command string) (*exec.Cmd, func(), error) {
 			cleanup()
 			return nil, func() {}, err
 		}
-		script := "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n" + command
+		script := strings.Join([]string{
+			"$nativeEncoding = [System.Text.Encoding]::Default",
+			"[Console]::OutputEncoding = $nativeEncoding",
+			"$OutputEncoding = [System.Text.Encoding]::UTF8",
+			command,
+		}, "\n")
 		if _, err := scriptFile.WriteString(script); err != nil {
 			_ = scriptFile.Close()
 			cleanup()
@@ -116,47 +415,32 @@ func appendErrorResult(result, err string) string {
 	return result + "\n" + err
 }
 
-func uploadTaskResult(taskID, result string, exitCode int, finishedAt time.Time) {
-	payload := map[string]interface{}{
-		"task_id":     taskID,
-		"result":      result,
-		"exit_code":   exitCode,
-		"finished_at": finishedAt,
+func uploadTaskResult(taskID, result string, exitCode int, finishedAt time.Time, status string) bool {
+	return uploadTaskResultFn(taskID, result, exitCode, finishedAt, status)
+}
+
+func defaultUploadTaskResult(taskID, result string, exitCode int, finishedAt time.Time, status string) bool {
+	if strings.TrimSpace(flags.Token) == "" {
+		return false
 	}
-
-	jsonData, _ := json.Marshal(payload)
-	endpoint := strings.TrimSuffix(flags.Endpoint, "/") + "/api/clients/task/result"
-
-	client := dnsresolver.GetHTTPClientWithPreference(30*time.Second, flags.PreferIPVersion)
-	maxRetry := flags.MaxRetries
-	for attempt := 0; attempt <= maxRetry; attempt++ {
-		req, err := http.NewRequest("POST", endpoint, bytes.NewReader(jsonData))
-		if err != nil {
-			log.Printf("Failed to create task result request: %v", err)
-			return
+	payload := v2.BuildTaskResultPayload(taskID, result, exitCode, finishedAt, status)
+	var err error
+	for attempt := 0; attempt <= flags.MaxRetries; attempt++ {
+		err = postV2RPC(payload)
+		if err == nil {
+			return true
 		}
-		req.Header.Set("Content-Type", "application/json")
-		authorizeAgentRequest(req, flags.Token)
-
-		resp, err := client.Do(req)
-		if resp != nil {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
+		if attempt == flags.MaxRetries {
+			break
 		}
-		if err == nil && resp != nil && resp.StatusCode == http.StatusOK {
-			return
+		delay := time.Duration(flags.ReconnectInterval) * time.Second
+		if delay <= 0 {
+			delay = time.Second
 		}
-		if attempt == maxRetry {
-			if err != nil {
-				log.Printf("Failed to upload task result: %v", err)
-			} else if resp != nil {
-				log.Printf("Failed to upload task result: %s", resp.Status)
-			}
-			return
-		}
-		log.Printf("Failed to upload task result, retrying %d/%d", attempt+1, maxRetry)
-		time.Sleep(2 * time.Second)
+		time.Sleep(delay)
 	}
+	log.Printf("Failed to upload task result: %v", err)
+	return false
 }
 
 // resolveIP 解析域名到 IP 地址，排除 DNS 查询时间
@@ -279,7 +563,7 @@ func httpPing(target string, timeout time.Duration) (int64, error) {
 	return latency, errors.New("http status not ok")
 }
 
-func NewPingTask(conn *ws.SafeConn, protocolVersion int, taskID uint, pingType, pingTarget string) {
+func NewPingTask(conn *ws.SafeConn, taskID uint, pingType, pingTarget string) {
 	if taskID == 0 {
 		log.Printf("Invalid task ID: %d", taskID)
 		return
@@ -338,26 +622,10 @@ func NewPingTask(conn *ws.SafeConn, protocolVersion int, taskID uint, pingType, 
 		pingResult = int(latency)
 	}
 	finishedAt := time.Now()
-	payload := map[string]interface{}{
-		"type":        "ping_result",
-		"task_id":     taskID,
-		"ping_type":   pingType,
-		"value":       pingResult,
-		"finished_at": finishedAt,
-	}
-	var wsPayload interface{} = payload
-	if protocolVersion >= 2 {
-		wsPayload = v2.BuildPingResultPayload(taskID, pingType, pingResult, finishedAt)
-	}
-	// -1 represents packet loss and is interpreted by the server.
-	//if pingResult == -1 {
-	//	return
-	//}
+	wsPayload := v2.BuildPingResultPayload(taskID, pingType, pingResult, finishedAt)
 	if conn == nil {
-		if protocolVersion >= 2 {
-			if err := postV2RPC(wsPayload); err != nil {
-				log.Printf("Failed to upload ping result over POST: %v", err)
-			}
+		if err := postV2RPC(wsPayload); err != nil {
+			log.Printf("Failed to upload ping result over POST: %v", err)
 		}
 		return
 	}

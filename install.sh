@@ -111,6 +111,224 @@ done
 # Remove leading space from agent_args if present
 agent_args="${agent_args# }"
 
+args_have_flag() {
+    local args="$1"
+    local name="$2"
+    local token
+    # shellcheck disable=SC2086
+    for token in $args; do
+        case "$token" in
+            --"$name"|--"$name"=*)
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+flag_bool_value() {
+    local args="$1"
+    local name="$2"
+    local token
+    # shellcheck disable=SC2086
+    for token in $args; do
+        case "$token" in
+            --"$name")
+                echo "true"
+                return
+                ;;
+            --"$name"=*)
+                echo "${token#--$name=}"
+                return
+                ;;
+        esac
+    done
+    echo "true"
+}
+
+strip_remote_control_flags() {
+    local args="$1"
+    local token out=""
+    # shellcheck disable=SC2086
+    for token in $args; do
+        case "$token" in
+            --enable-remote-control|--enable-remote-control=*|--disable-web-ssh|--disable-web-ssh=*)
+                continue
+                ;;
+        esac
+        out="$out $token"
+    done
+    echo "${out# }"
+}
+
+bool_flag_is_true() {
+    case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+        false|0|no|off) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+managed_service_unit_exists() {
+    local name="$1"
+    [ -f "/etc/systemd/system/${name}.service" ] && return 0
+    [ -f "/etc/init.d/${name}" ] && return 0
+    [ -f "/etc/init/${name}.conf" ] && return 0
+    if [ "$os_name" = "darwin" ]; then
+        [ -f "/Library/LaunchDaemons/com.lite.${name}.plist" ] && return 0
+        [ -f "/Library/LaunchDaemons/com.komari.${name}.plist" ] && return 0
+        [ -f "$HOME/Library/LaunchAgents/com.lite.${name}.plist" ] && return 0
+        [ -f "$HOME/Library/LaunchAgents/com.komari.${name}.plist" ] && return 0
+    fi
+    return 1
+}
+
+extract_args_after_binary() {
+    local line="$1"
+    line="${line#ExecStart=}"
+    line="${line#exec }"
+    line="${line#\"}"
+    line="${line%\"}"
+    # shellcheck disable=SC2086
+    set -- $line
+    shift
+    printf '%s' "$*"
+}
+
+read_service_args_from_unit() {
+    local name="$1"
+    local unit line
+    if [ -f "/etc/systemd/system/${name}.service" ]; then
+        line=$(grep -E '^ExecStart=' "/etc/systemd/system/${name}.service" | head -n1)
+        if [ -n "$line" ]; then
+            extract_args_after_binary "$line"
+            return 0
+        fi
+    fi
+    if [ -f "/etc/init.d/${name}" ]; then
+        line=$(grep -E '^(ARGS|command_args)=' "/etc/init.d/${name}" | head -n1)
+        if [ -n "$line" ]; then
+            line="${line#ARGS=}"
+            line="${line#command_args=}"
+            line="${line#\"}"
+            line="${line%\"}"
+            printf '%s' "$line"
+            return 0
+        fi
+    fi
+    if [ -f "/etc/init/${name}.conf" ]; then
+        line=$(grep -E '^exec ' "/etc/init/${name}.conf" | head -n1)
+        if [ -n "$line" ]; then
+            extract_args_after_binary "$line"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+flag_path_value() {
+    local args="$1"
+    local name="$2"
+    local prev=""
+    local token
+    # shellcheck disable=SC2086
+    for token in $args; do
+        if [ "$prev" = "--$name" ]; then
+            echo "$token"
+            return
+        fi
+        case "$token" in
+            --"$name"=*)
+                echo "${token#--$name=}"
+                return
+                ;;
+        esac
+        prev="$token"
+    done
+}
+
+preserve_existing_config_arg() {
+    if args_have_flag "$agent_args" "config"; then
+        return
+    fi
+    local existing=""
+    existing=$(read_existing_managed_service_args) || return 0
+    local cfg
+    cfg=$(flag_path_value "$existing" "config")
+    [ -n "$cfg" ] || return 0
+    [ -f "$cfg" ] || return 0
+    mkdir -p "$target_dir"
+    local dest="$target_dir/$(basename "$cfg")"
+    if [ "$cfg" != "$dest" ] && [ ! -f "$dest" ]; then
+        log_info "Copying config $(basename "$cfg") to $target_dir"
+        cp -a "$cfg" "$dest"
+    fi
+    if [ -f "$dest" ]; then
+        agent_args="${agent_args} --config ${dest}"
+        agent_args="${agent_args# }"
+        log_info "Keeping existing --config ${dest}"
+    fi
+}
+
+read_existing_managed_service_args() {
+    if managed_service_unit_exists "$service_name"; then
+        read_service_args_from_unit "$service_name" || true
+        return 0
+    fi
+    if [ "$custom_layout" != true ] && managed_service_unit_exists "$legacy_service_name"; then
+        read_service_args_from_unit "$legacy_service_name" || true
+        return 0
+    fi
+    return 1
+}
+
+apply_remote_control_install_args() {
+    local existing=""
+    local managed=false
+    if args_have_flag "$agent_args" "enable-remote-control"; then
+        return
+    fi
+    if args_have_flag "$agent_args" "disable-web-ssh"; then
+        if bool_flag_is_true "$(flag_bool_value "$agent_args" "disable-web-ssh")"; then
+            agent_args="$(strip_remote_control_flags "$agent_args") --enable-remote-control=false"
+        else
+            agent_args="$(strip_remote_control_flags "$agent_args") --enable-remote-control=true"
+        fi
+        agent_args="${agent_args# }"
+        return
+    fi
+    if existing=$(read_existing_managed_service_args); then
+        managed=true
+    fi
+    if [ "$managed" != true ]; then
+        agent_args="${agent_args} --enable-remote-control=false"
+        agent_args="${agent_args# }"
+        return
+    fi
+    if args_have_flag "$existing" "enable-remote-control"; then
+        if bool_flag_is_true "$(flag_bool_value "$existing" "enable-remote-control")"; then
+            agent_args="${agent_args} --enable-remote-control=true"
+        else
+            agent_args="${agent_args} --enable-remote-control=false"
+        fi
+        agent_args="${agent_args# }"
+        return
+    fi
+    if args_have_flag "$existing" "disable-web-ssh"; then
+        if bool_flag_is_true "$(flag_bool_value "$existing" "disable-web-ssh")"; then
+            agent_args="${agent_args} --enable-remote-control=false"
+        else
+            agent_args="${agent_args} --enable-remote-control=true"
+        fi
+        agent_args="${agent_args# }"
+        return
+    fi
+    agent_args="${agent_args} --enable-remote-control=true"
+    agent_args="${agent_args# }"
+}
+
+apply_remote_control_install_args
+
+
 agent_path="${target_dir}/Lite-agent"
 if [ "$os_name" = "darwin" ] && command -v brew >/dev/null 2>&1; then
     # On macOS with Homebrew, we can run without root for dependencies
@@ -189,7 +407,7 @@ copy_sidecars_from() {
     fi
     mkdir -p "$target_dir"
     local name
-    for name in auto-discovery.json net_static.json net_static.json.bak; do
+    for name in auto-discovery.json net_static.json net_static.json.bak node.json remote-control.state; do
         if [ -f "$src/$name" ] && [ ! -f "$target_dir/$name" ]; then
             log_info "Copying $name from $src to $target_dir"
             cp -a "$src/$name" "$target_dir/$name"
@@ -266,6 +484,7 @@ else
     log_step "Custom install layout; leaving komari-agent in place."
     uninstall_named_service "$service_name"
 fi
+preserve_existing_config_arg
 
 install_dependencies() {
     log_step "Checking and installing dependencies..."

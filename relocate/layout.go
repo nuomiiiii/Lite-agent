@@ -19,6 +19,8 @@ var sidecarNames = []string{
 	"net_static.json",
 	"net_static.json.bak",
 	"nssm.exe",
+	"node.json",
+	"remote-control.state",
 }
 
 type layout struct {
@@ -179,6 +181,78 @@ func processAgentEnv(environ []string) []string {
 func isContainer(stat func(string) error) bool {
 	for _, marker := range []string{"/.lite-agent-container", "/.komari-agent-container"} {
 		if err := stat(marker); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func LooksLikeExistingInstall() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	return looksLikeExistingInstall(runtime.GOOS, exe, currentHome(), currentProgramFiles(), statPath)
+}
+
+// LooksLikePriorHostInstall reports a previous host agent that should keep
+// remote control on. Empty modern install directories and Docker images are
+// not treated as upgrades unless sidecar data from an older agent is present.
+func LooksLikePriorHostInstall() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	return looksLikePriorHostInstall(runtime.GOOS, exe, currentHome(), currentProgramFiles(), statPath)
+}
+
+func statPath(path string) error {
+	_, err := os.Stat(path)
+	return err
+}
+
+func looksLikePriorHostInstall(goos, executable, home, programFiles string, stat func(string) error) bool {
+	if isContainer(stat) {
+		return false
+	}
+	execDir := filepath.Clean(filepath.Dir(executable))
+	if looksLikeLayoutDir(execDir, goos, home, programFiles, true) {
+		return true
+	}
+	return looksLikeUpgradeSidecar(execDir, stat)
+}
+
+func looksLikeExistingInstall(goos, executable, home, programFiles string, stat func(string) error) bool {
+	if isContainer(stat) {
+		return true
+	}
+	execDir := filepath.Clean(filepath.Dir(executable))
+	if looksLikeLayoutDir(execDir, goos, home, programFiles, false) {
+		return true
+	}
+	return looksLikeUpgradeSidecar(execDir, stat)
+}
+
+func looksLikeLayoutDir(execDir, goos, home, programFiles string, legacyOnly bool) bool {
+	legacy, modern := defaultLayouts(goos, home, programFiles)
+	layouts := legacy
+	if !legacyOnly {
+		layouts = append(append([]layout{}, legacy...), modern...)
+	}
+	for _, item := range layouts {
+		if sameDir(execDir, item.Dir, goos) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeUpgradeSidecar(execDir string, stat func(string) error) bool {
+	for _, name := range sidecarNames {
+		if name == "nssm.exe" || name == "remote-control.state" {
+			continue
+		}
+		if err := stat(filepath.Join(execDir, name)); err == nil {
 			return true
 		}
 	}

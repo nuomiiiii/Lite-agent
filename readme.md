@@ -2,7 +2,9 @@
 
 Lite 的跨平台节点监控 Agent。本仓库版本在基础监控之外，支持安全远程终端、文件管理、远程命令、Cloudflare Access、在线配置下发与配置结果回执。
 
-当前稳定版本：`2.3.0.2`
+当前稳定版本：`2.3.1.0`
+
+Lite 需升级至 Lite 2.3.1 或更高版本。
 
 ## 安装与升级
 
@@ -15,10 +17,11 @@ Lite 的跨平台节点监控 Agent。本仓库版本在基础监控之外，支
 ```bash
 bash <(curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/install.sh) \
   --endpoint "https://example.com" \
-  --token "your-token"
+  --token "your-token" \
+  --enable-remote-control=false
 ```
 
-安装脚本支持 Linux、macOS 和 FreeBSD，并可通过 `--install-dir`、`--install-service-name`、`--install-ghproxy`、`--install-version` 调整安装过程。
+安装脚本支持 Linux、macOS 和 FreeBSD，并可通过 `--install-dir`、`--install-service-name`、`--install-ghproxy`、`--install-version` 调整安装过程。需要开启远程控制时，把 `--enable-remote-control=false` 换成 `--enable-remote-control`。
 
 ### Docker
 
@@ -29,7 +32,7 @@ docker pull ghcr.io/nuomiiiii/Lite-agent:latest
 也可以拉取固定版本：
 
 ```bash
-docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.0.2
+docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.1.0
 ```
 
 容器的启动参数、宿主机目录挂载和节点 Token 请以 Lite 后台生成的部署命令为准。Docker 部署不会在容器内替换 Agent 二进制；升级时需拉取新镜像并重建容器。
@@ -40,7 +43,10 @@ docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.0.2
 
 ```bash
 chmod +x ./Lite-agent-linux-amd64
-./Lite-agent-linux-amd64 --endpoint "https://example.com" --token "your-token"
+./Lite-agent-linux-amd64 \
+  --endpoint "https://example.com" \
+  --token "your-token" \
+  --enable-remote-control=false
 ```
 
 未禁用自动更新的二进制安装会自动检查稳定版本，也可以通过 Lite 面板发起 Agent 更新。自动更新只替换程序文件，不会修改服务启动参数、容器参数或节点 Token。
@@ -57,10 +63,10 @@ chmod +x ./Lite-agent-linux-amd64
 ## 远程管理与安全
 
 - Agent 只主动连接配置的 Lite Server，不监听公网控制端口。
-- 远程终端和文件管理继续受管理员登录、2FA、一次性票据保护。
-- 用户启用“禁用远程控制”后，远程终端和远程命令均会被禁止。
-- 自 `2.1.11.1` 起，Lite Server 与 Agent 安装在同一节点时也能正常使用远程管理；普通节点原有的本机地址保护保持不变。
-- 文件操作会拦截符号链接、文件系统根目录、复制到自身、目标已存在等危险情况，上传过程会校验分块和最终文件大小。
+- 远程终端、文件管理和远程命令由节点本地开关控制：`--enable-remote-control` / `remote_control_enabled`。Lite 后台一键安装会明确写入开启或关闭；没勾选时写入 `--enable-remote-control=false`。
+- 已安装节点如果只有 `-e -t`、从未写过 `--disable-web-ssh`，升级后远程控制保持开启。旧配置里的 `disable_web_ssh` 会迁成 `remote_control_enabled`。
+- 远程终端和文件管理继续受站点「允许远程管理」、管理员登录、2FA 和一次性票据保护。节点未启用远程控制时，终端、文件和 exec 都会被拒绝。
+- 文件操作会拦截符号链接、文件系统根目录、复制到自身、目标已存在等危险情况；列表支持分页，上传下载有并发和大小上限。
 
 > 从 `2.1.6` 或更早版本升级时，如果节点仍使用旧 Token，应先升级 Lite Server/Web，再在后台轮换节点 Token，并在 24 小时内重新执行该节点的部署命令。仅等待 Agent 自动更新不会替换服务或容器中的 Token。
 
@@ -90,7 +96,7 @@ export AGENT_TOKEN="your-token"
   "token": "your-token",
   "interval": 3,
   "disable_auto_update": false,
-  "disable_web_ssh": false,
+  "remote_control_enabled": false,
   "ignore_unsafe_cert": false
 }
 ```
@@ -105,7 +111,7 @@ export AGENT_TOKEN="your-token"
 | `token` | `AGENT_TOKEN` | `--token`, `-t` | 节点 Token |
 | `interval` | `AGENT_INTERVAL` | `--interval`, `-i` | 数据采集间隔，单位秒 |
 | `disable_auto_update` | `AGENT_DISABLE_AUTO_UPDATE` | `--disable-auto-update` | 禁用自动更新 |
-| `disable_web_ssh` | `AGENT_DISABLE_WEB_SSH` | `--disable-web-ssh` | 禁用远程控制 |
+| `remote_control_enabled` | `AGENT_REMOTE_CONTROL_ENABLED` | `--enable-remote-control` | 启用远程终端、文件和命令；新装请显式写 `true` 或 `false` |
 | `ignore_unsafe_cert` | `AGENT_IGNORE_UNSAFE_CERT` | `--ignore-unsafe-cert`, `-u` | 忽略不安全证书 |
 | `max_retries` | `AGENT_MAX_RETRIES` | `--max-retries`, `-r` | 最大重试次数 |
 | `reconnect_interval` | `AGENT_RECONNECT_INTERVAL` | `--reconnect-interval`, `-c` | 重连间隔，单位秒 |
@@ -124,7 +130,7 @@ export AGENT_TOKEN="your-token"
 | `cf_access_client_id` | `AGENT_CF_ACCESS_CLIENT_ID` | `--cf-access-client-id` | Cloudflare Access Service Token Client ID |
 | `cf_access_client_secret` | `AGENT_CF_ACCESS_CLIENT_SECRET` | `--cf-access-client-secret` | Cloudflare Access Service Token Client Secret，必须与 Client ID 同时配置 |
 | `custom_dns` | `AGENT_CUSTOM_DNS` | `--custom-dns` | 自定义 DNS 服务器 |
-| `protocol_version` | `AGENT_PROTOCOL_VERSION` | `--protocol-version` | 上报协议版本，默认 `2` |
+| `protocol_version` | `AGENT_PROTOCOL_VERSION` | `--protocol-version` | 上报协议版本，仅支持 `2` |
 | `disable_compression` | `AGENT_DISABLE_COMPRESSION` | `--disable-compression` | 禁用 v2 传输压缩 |
 | `prefer_ip_version` | `AGENT_PREFER_IP_VERSION` | `--prefer-ip-version` | 面板连接优先使用的 IP 版本，可选 `4` 或 `6` |
 
@@ -152,7 +158,7 @@ Agent 会向 Lite 回报当前实际生效的配置。保存配置后，状态�
 
 以下七项属于安装或安全边界，可以由 Lite 保留以便以后重新安装，但**不能远程下发修改**：
 
-1. 禁用远程控制 `disable_web_ssh`
+1. 启用远程控制 `remote_control_enabled`
 2. 忽略不安全证书 `ignore_unsafe_cert`
 3. 禁用自动更新 `disable_auto_update`
 4. 从网卡获取 IP `get_ip_addr_from_nic`
@@ -160,7 +166,7 @@ Agent 会向 Lite 回报当前实际生效的配置。保存配置后，状态�
 6. 安装目录
 7. 服务名
 
-在线配置与状态同步需要配合支持该协议的 Lite Server。旧版面板会安全忽略新增字段，基础监控上报和原有远程功能不受影响。
+在线配置与状态同步：Lite 需升级至 Lite 2.3.1 或更高版本。
 
 ## 自动更新
 
@@ -202,5 +208,6 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 | `2.3.0.0` | 独立仓 `nuomiiiii/Lite-agent` 发版；自动更新只认本仓 `Lite-agent-*` 产物。默认节点会迁到 Lite 安装目录，进程名为 `Lite-agent`。WebSocket 增加读超时与心跳保活，握手后检查连接是否还活着，断开后短延迟重连；假死连接大约 1 分钟内会重连。 |
 | `2.3.0.1` | 回程探测会附带是否到达目标。目标是域名时，面板也能判断探测是否走到解析后的 IP。 |
 | `2.3.0.2` | 回程探测只认本次探测的 ICMP 回包，避免把无关或上一跳晚到的包当成路径跳点。 |
+| `2.3.1.0` | 远程控制改为正向开关。已装节点没写过禁止远程的，升级后仍开启；旧的 `disable_web_ssh` 会迁到新配置。新装由 Lite 一键命令明确写入开启或关闭。从默认 komari-agent 路径升级时，仍会带走节点身份、流量统计和配置文件。文件管理增加队列、并发上限和列表分页。远程命令会记下执行状态；同一条命令不会因重试再跑一遍，进程中断后会补报执行状态未知。Windows 命令输出会尽量转成可读文本。是否允许远程由站点开关和节点本地开关共同决定。Lite 需升级至 Lite 2.3.1 或更高版本。 |
 
 完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-agent/releases)。

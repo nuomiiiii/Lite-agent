@@ -13,7 +13,7 @@ func TestProcessBasicInfoResponseAppliesDisabledConfig(t *testing.T) {
 	runtimeconfig.Initialize(runtimeconfig.State{MonthRotate: 26, Interval: 3})
 
 	body := []byte(`{"jsonrpc":"2.0","id":"test","result":{"status":"success","config":{"month_rotate":0}}}`)
-	if err := processBasicInfoResponse(body, 2); err != nil {
+	if err := processBasicInfoResponse(body); err != nil {
 		t.Fatalf("processBasicInfoResponse() error = %v", err)
 	}
 	if got := runtimeconfig.MonthRotateDay(); got != 0 {

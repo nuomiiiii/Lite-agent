@@ -114,7 +114,7 @@ func traceRouteICMPv4(destination net.IP, maxHops int) ([]v2.RouteHop, error) {
 		if err := packet.SetTTL(ttl); err != nil {
 			return hops, fmt.Errorf("set IPv4 TTL: %w", err)
 		}
-		message := icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: ttl, Data: []byte("komari-route")}}
+		message := icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: ttl, Data: []byte("lite-route")}}
 		payload, err := message.Marshal(nil)
 		if err != nil {
 			return hops, err
@@ -158,7 +158,7 @@ func traceRouteICMPv6(destination net.IP, maxHops int) ([]v2.RouteHop, error) {
 		if err := packet.SetHopLimit(ttl); err != nil {
 			return hops, fmt.Errorf("set IPv6 hop limit: %w", err)
 		}
-		message := icmp.Message{Type: ipv6.ICMPTypeEchoRequest, Code: 0, Body: &icmp.Echo{ID: id, Seq: ttl, Data: []byte("komari-route")}}
+		message := icmp.Message{Type: ipv6.ICMPTypeEchoRequest, Code: 0, Body: &icmp.Echo{ID: id, Seq: ttl, Data: []byte("lite-route")}}
 		payload, err := message.Marshal(nil)
 		if err != nil {
 			return hops, err

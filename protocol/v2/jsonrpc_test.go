@@ -34,6 +34,7 @@ func TestBuildBasicInfoPayloadReportsOnlyRuntimeSafeConfig(t *testing.T) {
 	encoded := string(payload)
 	for _, forbidden := range []string{
 		"disable_web_ssh",
+		"allow_control_node_remote",
 		"disable_auto_update",
 		"ignore_unsafe_cert",
 		"get_ip_addr_from_nic",

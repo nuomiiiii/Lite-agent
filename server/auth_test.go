@@ -64,22 +64,24 @@ func TestAgentAuthorizationUsesHeader(t *testing.T) {
 	}
 }
 
-func TestRemoteHeadersPreserveAllAuthenticationLayers(t *testing.T) {
+func TestRemoteHeadersAreLiteOnly(t *testing.T) {
 	configureAccessTest(t, "", "access-id", "access-secret")
 
-	terminalHeaders := terminalAuthorizationHeader("agent-token", "terminal-session")
-	if terminalHeaders.Get("X-Komari-Terminal-Session") != "terminal-session" ||
-		terminalHeaders.Get("X-Lite-Terminal-Session") != "terminal-session" ||
-		!headersContainAccessCredentials(terminalHeaders) {
-		t.Fatalf("terminal headers are incomplete: %#v", terminalHeaders)
-	}
 	remoteHeaders := remoteAuthorizationHeader("agent-token", "remote-session", "remote-ticket")
-	if remoteHeaders.Get("X-Komari-Remote-Session") != "remote-session" ||
-		remoteHeaders.Get("X-Komari-Remote-Ticket") != "remote-ticket" ||
-		remoteHeaders.Get("X-Lite-Remote-Session") != "remote-session" ||
+	if remoteHeaders.Get("X-Lite-Remote-Session") != "remote-session" ||
 		remoteHeaders.Get("X-Lite-Remote-Ticket") != "remote-ticket" ||
 		!headersContainAccessCredentials(remoteHeaders) {
 		t.Fatalf("remote headers are incomplete: %#v", remoteHeaders)
+	}
+	for _, forbidden := range []string{
+		"X-Komari-Remote-Session",
+		"X-Komari-Remote-Ticket",
+		"X-Komari-Terminal-Session",
+		"X-Lite-Terminal-Session",
+	} {
+		if got := remoteHeaders.Get(forbidden); got != "" {
+			t.Fatalf("forbidden header %s = %q", forbidden, got)
+		}
 	}
 }
 
@@ -139,19 +141,16 @@ func TestCloudflareAccessProtectedAgentHTTPFlows(t *testing.T) {
 	t.Cleanup(server.Close)
 	configureAccessTest(t, server.URL, "", "")
 
-	if err := tryUploadDataWithProtocol(map[string]interface{}{"name": "test"}, 1); err == nil {
+	if err := tryUploadData(map[string]interface{}{"name": "test"}); err == nil {
 		t.Fatal("HTTP request unexpectedly passed Cloudflare Access without service-token headers")
 	}
 	flags.CFAccessClientID = "access-id"
 	flags.CFAccessClientSecret = "access-secret"
 
-	if err := tryUploadDataWithProtocol(map[string]interface{}{"name": "test"}, 1); err != nil {
-		t.Fatalf("v1 basic info failed: %v", err)
-	}
-	if err := tryUploadDataWithProtocol(map[string]interface{}{"name": "test"}, 2); err != nil {
+	if err := tryUploadData(map[string]interface{}{"name": "test"}); err != nil {
 		t.Fatalf("v2 basic info failed: %v", err)
 	}
-	uploadTaskResult("task-id", "ok", 0, time.Now())
+	uploadTaskResult("task-id", "ok", 0, time.Now(), v2.TaskResultStatusFinished)
 	if err := postV2RPC(v2.Request{JSONRPC: v2.Version, ID: "task", Method: v2.MethodAgentTaskResult}); err != nil {
 		t.Fatalf("v2 task result failed: %v", err)
 	}
@@ -159,13 +158,7 @@ func TestCloudflareAccessProtectedAgentHTTPFlows(t *testing.T) {
 		t.Fatalf("v2 POST fallback failed: %v", err)
 	}
 
-	if seen["/api/clients/uploadBasicInfo"] != 1 {
-		t.Fatalf("v1 basic info requests = %d", seen["/api/clients/uploadBasicInfo"])
-	}
-	if seen["/api/clients/task/result"] != 1 {
-		t.Fatalf("v1 task-result requests = %d", seen["/api/clients/task/result"])
-	}
-	if seen["/api/clients/v2/rpc"] != 3 {
+	if seen["/api/clients/v2/rpc"] != 4 {
 		t.Fatalf("v2 POST requests = %d", seen["/api/clients/v2/rpc"])
 	}
 }
@@ -177,17 +170,18 @@ func TestWebSocketEndpointDoesNotContainAgentToken(t *testing.T) {
 		flags.Endpoint, flags.Token = originalEndpoint, originalToken
 	})
 
-	for _, protocolVersion := range []int{1, 2} {
-		endpoint := buildWebSocketEndpoint(protocolVersion)
-		parsed, err := url.Parse(endpoint)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if parsed.RawQuery != "" {
-			t.Fatalf("v%d websocket URL contains query data: %q", protocolVersion, parsed.RawQuery)
-		}
-		if endpoint == "" || parsed.Host != "example.com" {
-			t.Fatalf("unexpected websocket endpoint: %q", endpoint)
-		}
+	endpoint := buildWebSocketEndpoint()
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.RawQuery != "" {
+		t.Fatalf("websocket URL contains query data: %q", parsed.RawQuery)
+	}
+	if endpoint == "" || parsed.Host != "example.com" {
+		t.Fatalf("unexpected websocket endpoint: %q", endpoint)
+	}
+	if !strings.HasSuffix(parsed.Path, "/api/clients/v2/rpc") {
+		t.Fatalf("unexpected websocket path: %q", parsed.Path)
 	}
 }

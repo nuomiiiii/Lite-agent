@@ -1,9 +1,16 @@
 package update
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nuomiiiii/lite-agent/cmd/flags"
+	"github.com/nuomiiiii/lite-agent/remotecontrol"
+	"github.com/rhysd/go-github-selfupdate/selfupdate"
 )
 
 func TestDefaultUpdateRepo(t *testing.T) {
@@ -88,6 +95,8 @@ func TestNeedUpdate(t *testing.T) {
 		{"2.3.0.1+abc1234", "2.3.0.1", false},
 		{"2.3.0.1", "2.3.0.2", true},
 		{"2.3.0.2+abc1234", "2.3.0.2", false},
+		{"2.3.0.2", "2.3.1.0", true},
+		{"2.3.1.0+abc1234", "2.3.1.0", false},
 	}
 
 	for _, tt := range tests {
@@ -348,11 +357,65 @@ func testRelease(tag string, prerelease, draft bool, publishedAt time.Time, asse
 	return githubRelease{
 		TagName:     tag,
 		Name:        tag,
-		Body:        "test release",
+		Body:        tag,
 		Draft:       draft,
 		Prerelease:  prerelease,
 		HTMLURL:     "https://example.com/" + tag,
 		PublishedAt: publishedAt,
 		Assets:      assets,
+	}
+}
+
+func TestReplaceAgentBinaryPersistsRemoteControlBeforeUpdate(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "Lite-agent")
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousPersist := persistRemoteControlState
+	previousUpdate := updateBinaryTo
+	previousEnabled := flags_pkg.GlobalConfig.RemoteControlEnabled
+	t.Cleanup(func() {
+		persistRemoteControlState = previousPersist
+		updateBinaryTo = previousUpdate
+		flags_pkg.GlobalConfig.RemoteControlEnabled = previousEnabled
+	})
+	flags_pkg.GlobalConfig.RemoteControlEnabled = true
+	updated := false
+	persistRemoteControlState = persistRemoteControlBeforeReplace
+	updateBinaryTo = func(*selfupdate.Updater, *selfupdate.Release, string) error {
+		enabled, ok, err := remotecontrol.Read(remotecontrol.PathForExecutable(exe))
+		if err != nil || !ok || !enabled {
+			t.Errorf("state before replace enabled=%t ok=%t err=%v", enabled, ok, err)
+		}
+		updated = true
+		return nil
+	}
+	if err := replaceAgentBinary(nil, &selfupdate.Release{}, exe); err != nil {
+		t.Fatal(err)
+	}
+	if !updated {
+		t.Fatal("binary replace was skipped")
+	}
+}
+
+func TestReplaceAgentBinarySkipsUpdateWhenPersistFails(t *testing.T) {
+	previousPersist := persistRemoteControlState
+	previousUpdate := updateBinaryTo
+	t.Cleanup(func() {
+		persistRemoteControlState = previousPersist
+		updateBinaryTo = previousUpdate
+	})
+	persistRemoteControlState = func(string) error { return errors.New("persist failed") }
+	updated := false
+	updateBinaryTo = func(*selfupdate.Updater, *selfupdate.Release, string) error {
+		updated = true
+		return nil
+	}
+	if err := replaceAgentBinary(nil, &selfupdate.Release{}, "Lite-agent"); err == nil {
+		t.Fatal("expected persist failure")
+	}
+	if updated {
+		t.Fatal("binary must not be replaced when remote-control state cannot be persisted")
 	}
 }

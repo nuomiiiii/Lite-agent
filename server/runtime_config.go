@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -17,27 +16,23 @@ type runtimeConfigEnvelope struct {
 	RequestConfigState bool             `json:"request_config_state,omitempty"`
 }
 
-func processBasicInfoResponse(body []byte, protocolVersion int) error {
+func processBasicInfoResponse(body []byte) error {
 	var envelope runtimeConfigEnvelope
-	if protocolVersion >= 2 {
-		response, err := parseV2Response(body)
-		if err != nil {
-			return err
-		}
-		if response.Result == nil {
-			return nil
-		}
-		if err := v2.BindResult(response.Result, &envelope); err != nil {
-			return fmt.Errorf("failed to parse runtime config: %w", err)
-		}
-	} else if err := json.Unmarshal(body, &envelope); err != nil {
+	response, err := parseV2Response(body)
+	if err != nil {
+		return err
+	}
+	if response.Result == nil {
+		return nil
+	}
+	if err := v2.BindResult(response.Result, &envelope); err != nil {
 		return fmt.Errorf("failed to parse runtime config: %w", err)
 	}
 	if envelope.Config == nil {
 		if envelope.RequestConfigState {
-			return tryUploadDataWithProtocol(map[string]interface{}{
+			return tryUploadData(map[string]interface{}{
 				"month_rotate": runtimeconfig.MonthRotateDay(),
-			}, protocolVersion)
+			})
 		}
 		return nil
 	}
@@ -126,7 +121,7 @@ func applyRuntimeConfig(config v2.ConfigParams) (bool, error) {
 	}
 
 	runtimeconfig.Set(next)
-	log.Printf("Applied Komari runtime config: interval=%gs month_rotate=%d", next.Interval, next.MonthRotate)
+	log.Printf("Applied Lite runtime config: interval=%gs month_rotate=%d", next.Interval, next.MonthRotate)
 	return true, nil
 }
 

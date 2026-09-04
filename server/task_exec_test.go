@@ -120,6 +120,25 @@ func TestAppendErrorResultAvoidsLeadingNewline(t *testing.T) {
 	}
 }
 
+func TestRunTaskCommandTruncatesLargeOutput(t *testing.T) {
+	var command string
+	if runtime.GOOS == "windows" {
+		command = "Write-Output ('x' * 1100000)"
+	} else {
+		command = "dd if=/dev/zero bs=1100000 count=1 2>/dev/null | tr '\\0' 'x'"
+	}
+	result, exitCode := runTaskCommand(command)
+	if exitCode != 0 {
+		t.Fatalf("large output command failed: exit=%d result=%q", exitCode, result)
+	}
+	if !strings.HasSuffix(result, "\n[truncated]") {
+		t.Fatalf("result was not truncated: suffix=%q len=%d", result[max(0, len(result)-20):], len(result))
+	}
+	if len(result) > (1<<20)+len("\n[truncated]") {
+		t.Fatalf("truncated result still too large: %d", len(result))
+	}
+}
+
 func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }

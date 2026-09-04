@@ -4,8 +4,10 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type recordingFileWriter struct {
@@ -269,5 +271,96 @@ func TestDownloadErrorUsesDownloadErrorFrame(t *testing.T) {
 	response := writer.last(t)
 	if response["type"] != "file.download.error" || response["id"] != "download" {
 		t.Fatalf("unexpected download error response: %#v", response)
+	}
+}
+
+func TestFileManagerBusyWhenQueueFull(t *testing.T) {
+	origWorkers, origQueue := fileWorkerCount, fileQueueSize
+	fileWorkerCount, fileQueueSize = 1, 1
+	t.Cleanup(func() {
+		fileWorkerCount, fileQueueSize = origWorkers, origQueue
+	})
+
+	writer := &recordingFileWriter{}
+	block := make(chan struct{})
+	entered := make(chan struct{}, 2)
+	manager := newFileManager(writer)
+	manager.beforeHandle = func() {
+		entered <- struct{}{}
+		<-block
+	}
+	defer func() {
+		close(block)
+		manager.close()
+	}()
+
+	dir := filepath.ToSlash(t.TempDir())
+	payload := func(id string) []byte {
+		return []byte(`{"type":"file.list","id":"` + id + `","path":"` + dir + `"}`)
+	}
+	manager.enqueue(payload("one"))
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not pick up the first job")
+	}
+	manager.enqueue(payload("queued"))
+	manager.enqueue(payload("busy"))
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		writer.mu.Lock()
+		for _, message := range writer.messages {
+			if message["id"] == "busy" {
+				writer.mu.Unlock()
+				if responseOK(t, message) {
+					t.Fatalf("busy enqueue succeeded: %#v", message)
+				}
+				errText, _ := message["error"].(string)
+				if !strings.Contains(errText, "busy") {
+					t.Fatalf("expected busy error, got %#v", message)
+				}
+				return
+			}
+		}
+		writer.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("did not receive busy response")
+}
+
+func TestConcurrentUploadsAreCapped(t *testing.T) {
+	directory := t.TempDir()
+	writer := &recordingFileWriter{}
+	manager := newFileManager(writer)
+	defer manager.close()
+
+	manager.startUpload(fileRequest{Type: "file.upload.start", ID: "a", Path: filepath.Join(directory, "a.bin"), Size: 10})
+	if !responseOK(t, writer.last(t)) {
+		t.Fatalf("first upload was rejected: %#v", writer.last(t))
+	}
+	manager.startUpload(fileRequest{Type: "file.upload.start", ID: "b", Path: filepath.Join(directory, "b.bin"), Size: 10})
+	if !responseOK(t, writer.last(t)) {
+		t.Fatalf("second upload was rejected: %#v", writer.last(t))
+	}
+	manager.startUpload(fileRequest{Type: "file.upload.start", ID: "c", Path: filepath.Join(directory, "c.bin"), Size: 10})
+	if responseOK(t, writer.last(t)) {
+		t.Fatal("third concurrent upload was accepted")
+	}
+}
+
+func TestSessionUploadReservationRespectsTransferLimit(t *testing.T) {
+	directory := t.TempDir()
+	writer := &recordingFileWriter{}
+	manager := newFileManager(writer)
+	defer manager.close()
+
+	manager.startUpload(fileRequest{Type: "file.upload.start", ID: "big", Path: filepath.Join(directory, "big.bin"), Size: maxFileTransferSize})
+	if !responseOK(t, writer.last(t)) {
+		t.Fatalf("full-size upload was rejected: %#v", writer.last(t))
+	}
+	manager.startUpload(fileRequest{Type: "file.upload.start", ID: "overflow", Path: filepath.Join(directory, "overflow.bin"), Size: 1})
+	if responseOK(t, writer.last(t)) {
+		t.Fatal("session upload reservation overflow was accepted")
 	}
 }

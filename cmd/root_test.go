@@ -1,12 +1,16 @@
 package cmd
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	pkg_flags "github.com/nuomiiiii/lite-agent/cmd/flags"
+	"github.com/nuomiiiii/lite-agent/remotecontrol"
 	"github.com/spf13/cobra"
 )
 
@@ -33,6 +37,9 @@ func TestValidateRuntimeConfig(t *testing.T) {
 		{name: "negative retries", mutate: func(c *pkg_flags.Config) { c.MaxRetries = -1 }},
 		{name: "invalid month day", mutate: func(c *pkg_flags.Config) { c.MonthRotate = 32 }},
 		{name: "invalid protocol", mutate: func(c *pkg_flags.Config) { c.ProtocolVersion = 3 }},
+		{name: "protocol v1 removed", mutate: func(c *pkg_flags.Config) { c.ProtocolVersion = 1 }},
+		{name: "protocol 0 means 2", mutate: func(c *pkg_flags.Config) { c.ProtocolVersion = 0 }, valid: true},
+		{name: "protocol 2 ok", mutate: func(c *pkg_flags.Config) { c.ProtocolVersion = 2 }, valid: true},
 		{name: "ipv4 preferred", mutate: func(c *pkg_flags.Config) { c.PreferIPVersion = "4" }, valid: true},
 		{name: "invalid preferred IP", mutate: func(c *pkg_flags.Config) { c.PreferIPVersion = "auto" }},
 		{name: "Cloudflare Access credentials", mutate: func(c *pkg_flags.Config) {
@@ -151,5 +158,445 @@ func TestAutoDiscoveryUsesSeparateCloudflareAccessHeaders(t *testing.T) {
 	}
 	if got := request.Header.Get("CF-Access-Client-Secret"); got != "access-secret" {
 		t.Fatalf("CF-Access-Client-Secret = %q", got)
+	}
+}
+
+func remoteControlTestCommand(config *pkg_flags.Config) *cobra.Command {
+	command := &cobra.Command{Use: "test"}
+	command.Flags().BoolVar(&config.RemoteControlEnabled, "enable-remote-control", false, "")
+	command.Flags().BoolVar(&config.DisableWebSsh, "disable-web-ssh", false, "")
+	command.Flags().StringVar(&config.ConfigFile, "config", config.ConfigFile, "")
+	return command
+}
+
+func withIsolatedRemoteControlState(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), remotecontrol.StateFileName)
+	previous := remoteControlStatePath
+	previousHost := looksLikePriorHostInstall
+	remoteControlStatePath = func() string { return path }
+	looksLikePriorHostInstall = func() bool { return false }
+	t.Cleanup(func() {
+		remoteControlStatePath = previous
+		looksLikePriorHostInstall = previousHost
+	})
+}
+
+func TestJSONWithoutRemoteKeyDefaultsOff(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	configPath := filepath.Join(t.TempDir(), "agent.json")
+	original := []byte(`{"endpoint":"http://example","token":"secret"}`)
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := &pkg_flags.Config{ConfigFile: configPath}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.RemoteControlEnabled {
+		t.Fatal("JSON with only endpoint/token must default remote control off")
+	}
+	persisted, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted), `"remote_control_enabled"`) {
+		t.Fatalf("ordinary JSON must not be rewritten as an old install: %s", persisted)
+	}
+}
+
+func TestNewManualInstallWithoutRemoteFlagsDefaultsOff(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	config := &pkg_flags.Config{}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.RemoteControlEnabled {
+		t.Fatal("new manual installs without remote flags must default remote control off")
+	}
+}
+
+func TestStandardLayoutWithoutConfigDefaultsOff(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	config := &pkg_flags.Config{}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.RemoteControlEnabled {
+		t.Fatal("dropping the binary into a standard install directory must not enable remote control")
+	}
+}
+
+func TestPersistedStateEnablesRemoteControl(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	path := filepath.Join(t.TempDir(), remotecontrol.StateFileName)
+	if err := remotecontrol.WriteAtomic(path, true); err != nil {
+		t.Fatal(err)
+	}
+	previous := remoteControlStatePath
+	remoteControlStatePath = func() string { return path }
+	t.Cleanup(func() { remoteControlStatePath = previous })
+	config := &pkg_flags.Config{}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if !config.RemoteControlEnabled {
+		t.Fatal("trusted persisted migration state must enable remote control")
+	}
+}
+
+func TestPersistedStateDisablesRemoteControl(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	path := filepath.Join(t.TempDir(), remotecontrol.StateFileName)
+	if err := remotecontrol.WriteAtomic(path, false); err != nil {
+		t.Fatal(err)
+	}
+	previous := remoteControlStatePath
+	remoteControlStatePath = func() string { return path }
+	t.Cleanup(func() { remoteControlStatePath = previous })
+	config := &pkg_flags.Config{}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.RemoteControlEnabled {
+		t.Fatal("persisted remote-control=false must stay off")
+	}
+}
+
+func TestExplicitFlagOverridesPersistedState(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	path := filepath.Join(t.TempDir(), remotecontrol.StateFileName)
+	if err := remotecontrol.WriteAtomic(path, true); err != nil {
+		t.Fatal(err)
+	}
+	previous := remoteControlStatePath
+	remoteControlStatePath = func() string { return path }
+	t.Cleanup(func() { remoteControlStatePath = previous })
+	config := &pkg_flags.Config{}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags([]string{"--enable-remote-control=false"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.RemoteControlEnabled {
+		t.Fatal("explicit --enable-remote-control=false must win over persisted state")
+	}
+}
+
+func TestNewInstallExplicitlyDisablesRemoteControl(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	config := &pkg_flags.Config{}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags([]string{"--enable-remote-control=false"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.RemoteControlEnabled {
+		t.Fatal("new install --enable-remote-control=false must keep remote control off")
+	}
+}
+
+func TestDisableWebSshTrueMigratesToRemoteControlDisabled(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	configPath := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(configPath, []byte(`{"disable_web_ssh":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := &pkg_flags.Config{ConfigFile: configPath}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.RemoteControlEnabled {
+		t.Fatal("disable_web_ssh true must migrate to remote_control_enabled false")
+	}
+	persisted, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), `"remote_control_enabled"`) {
+		t.Fatalf("migrated config missing remote_control_enabled: %s", persisted)
+	}
+	if strings.Contains(string(persisted), "disable_web_ssh") {
+		t.Fatalf("migrated config still has disable_web_ssh: %s", persisted)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("migrated config mode = %o, want 0600", info.Mode().Perm())
+		}
+	}
+}
+
+func TestDisableWebSshFalseMigratesToRemoteControlEnabled(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	configPath := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(configPath, []byte(`{"disable_web_ssh":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := &pkg_flags.Config{ConfigFile: configPath}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if !config.RemoteControlEnabled {
+		t.Fatal("old configs with disable_web_ssh false must stay enabled")
+	}
+	persisted, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), `"remote_control_enabled": true`) &&
+		!strings.Contains(string(persisted), `"remote_control_enabled":true`) {
+		t.Fatalf("enabled migration was not persisted: %s", persisted)
+	}
+	if strings.Contains(string(persisted), "disable_web_ssh") {
+		t.Fatalf("migrated config still has disable_web_ssh: %s", persisted)
+	}
+}
+
+func TestDisableWebSshPersistFailureAborts(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	configPath := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(configPath, []byte(`{"disable_web_ssh":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previous := persistMigratedRemoteControlFn
+	persistMigratedRemoteControlFn = func(string, bool) error { return errors.New("persist failed") }
+	t.Cleanup(func() { persistMigratedRemoteControlFn = previous })
+	config := &pkg_flags.Config{ConfigFile: configPath}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err == nil {
+		t.Fatal("migration persist failure must abort startup")
+	}
+	persisted, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), "disable_web_ssh") {
+		t.Fatalf("failed persist must leave the original config: %s", persisted)
+	}
+}
+
+func TestEnvRemoteControlEnabled(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "true")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	config := &pkg_flags.Config{}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if !config.RemoteControlEnabled {
+		t.Fatal("AGENT_REMOTE_CONTROL_ENABLED=true must enable remote control")
+	}
+}
+
+func TestRemoteControlFlagWinsOverDisableWebSsh(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	config := &pkg_flags.Config{}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags([]string{"--enable-remote-control", "--disable-web-ssh"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if !config.RemoteControlEnabled {
+		t.Fatal("explicit --enable-remote-control must win over --disable-web-ssh")
+	}
+}
+
+func TestEnableRemoteControlFalseWinsOverLegacyDisableWebSshJSON(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	configPath := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(configPath, []byte(`{"disable_web_ssh":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := &pkg_flags.Config{ConfigFile: configPath}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags([]string{"--enable-remote-control=false"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.RemoteControlEnabled {
+		t.Fatal("--enable-remote-control=false must win over disable_web_ssh false")
+	}
+	persisted, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted), "disable_web_ssh") {
+		t.Fatalf("migrated config still has disable_web_ssh: %s", persisted)
+	}
+	if !strings.Contains(string(persisted), `"remote_control_enabled": false`) &&
+		!strings.Contains(string(persisted), `"remote_control_enabled":false`) {
+		t.Fatalf("migrated config missing remote_control_enabled false: %s", persisted)
+	}
+}
+
+func TestEnableRemoteControlFlagMigratesDisableWebSshFile(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	configPath := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(configPath, []byte(`{"disable_web_ssh":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := &pkg_flags.Config{ConfigFile: configPath}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags([]string{"--enable-remote-control"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if !config.RemoteControlEnabled {
+		t.Fatal("installer --enable-remote-control must start even when JSON still has disable_web_ssh")
+	}
+	persisted, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted), "disable_web_ssh") {
+		t.Fatalf("migrated config still has disable_web_ssh: %s", persisted)
+	}
+	if !strings.Contains(string(persisted), `"remote_control_enabled"`) {
+		t.Fatalf("migrated config missing remote_control_enabled: %s", persisted)
+	}
+}
+
+func TestRemoteControlFileKeyMigratesDisableWebSsh(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	withIsolatedRemoteControlState(t)
+	configPath := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(configPath, []byte(`{"remote_control_enabled":false,"disable_web_ssh":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := &pkg_flags.Config{ConfigFile: configPath}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.RemoteControlEnabled {
+		t.Fatal("remote_control_enabled false must win over leftover disable_web_ssh")
+	}
+	persisted, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted), "disable_web_ssh") {
+		t.Fatalf("migrated config still has disable_web_ssh: %s", persisted)
+	}
+}
+
+func TestPriorHostInstallKeepsRemoteControlOn(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_REMOTE_CONTROL_ENABLED", "")
+	t.Setenv("AGENT_DISABLE_WEB_SSH", "")
+	path := filepath.Join(t.TempDir(), remotecontrol.StateFileName)
+	previous := remoteControlStatePath
+	previousHost := looksLikePriorHostInstall
+	remoteControlStatePath = func() string { return path }
+	looksLikePriorHostInstall = func() bool { return true }
+	t.Cleanup(func() {
+		remoteControlStatePath = previous
+		looksLikePriorHostInstall = previousHost
+	})
+	config := &pkg_flags.Config{}
+	command := remoteControlTestCommand(config)
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if !config.RemoteControlEnabled {
+		t.Fatal("komari-agent and Lite-agent 2.3.0.2 host upgrades must keep remote control on")
+	}
+	enabled, ok, err := remotecontrol.Read(path)
+	if err != nil || !ok || !enabled {
+		t.Fatalf("prior host install must persist remote-control.state enabled=%t ok=%t err=%v", enabled, ok, err)
 	}
 }
