@@ -15,17 +15,13 @@ func defaultController() controller { return darwinController{} }
 
 type darwinController struct{}
 
-func (darwinController) DetectService(_ string) (string, bool) {
-	for _, label := range []string{"com.komari.komari-agent", "com.lite.lite-agent"} {
-		if fileExists("/Library/LaunchDaemons/"+label+".plist") ||
-			fileExists(filepath.Join(os.Getenv("HOME"), "Library/LaunchAgents", label+".plist")) {
-			if label == "com.komari.komari-agent" {
-				return legacyServiceName, true
-			}
-			return newServiceName, true
-		}
-	}
-	return "", false
+func (darwinController) DetectService(executable string) (string, bool) {
+	return officialLaunchdServiceForExecutable(executable, os.Getenv("HOME"), launchdPlistExists)
+}
+
+func launchdPlistExists(label string) bool {
+	return fileExists("/Library/LaunchDaemons/"+label+".plist") ||
+		fileExists(filepath.Join(os.Getenv("HOME"), "Library/LaunchAgents", label+".plist"))
 }
 
 func (darwinController) LegacyServiceExists(name string) bool {

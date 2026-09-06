@@ -22,12 +22,8 @@ func (windowsController) DetectService(executable string) (string, bool) {
 		return "", false
 	}
 	defer m.Disconnect()
-	names, err := m.ListServices()
-	if err != nil {
-		return "", false
-	}
-	want := strings.ToLower(filepath.Clean(executable))
-	for _, name := range names {
+	nssm := windowsNssm()
+	for _, name := range officialServiceNames() {
 		s, err := m.OpenService(name)
 		if err != nil {
 			continue
@@ -37,8 +33,17 @@ func (windowsController) DetectService(executable string) (string, bool) {
 		if err != nil {
 			continue
 		}
-		path := strings.ToLower(cfg.BinaryPathName)
-		if strings.Contains(path, want) || strings.Contains(path, strings.ToLower(filepath.Base(executable))) {
+		if looksLikeNssm(cfg.BinaryPathName) {
+			out, err := exec.Command(nssm, "get", name, "Application").Output()
+			if err != nil {
+				continue
+			}
+			if pathsReferToSameExecutable(decodeNssmOutput(out), executable) {
+				return name, true
+			}
+			continue
+		}
+		if binaryPathRunsExecutable(cfg.BinaryPathName, executable) {
 			return name, true
 		}
 	}

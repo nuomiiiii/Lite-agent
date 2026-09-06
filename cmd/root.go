@@ -46,6 +46,9 @@ var RootCmd = &cobra.Command{
 		if err := validateRuntimeConfig(flags); err != nil {
 			return err
 		}
+		if _, err := applySavedAgentToken(); err != nil {
+			return fmt.Errorf("load saved node token: %w", err)
+		}
 		if relocated, err := relocate.RelocateIfNeeded(); err != nil {
 			log.Println("layout relocation failed; continuing on the current path:", err)
 		} else if relocated {
@@ -117,13 +120,6 @@ var RootCmd = &cobra.Command{
 			log.Printf("Using system default DNS resolver")
 		}
 
-		// Auto discovery
-		if flags.AutoDiscoveryKey != "" {
-			err := handleAutoDiscovery()
-			if err != nil {
-				return fmt.Errorf("auto-discovery failed: %w", err)
-			}
-		}
 		server.StartTaskRecovery(recoverCtx)
 		diskList, err := monitoring.DiskList()
 		if err != nil {
@@ -362,7 +358,9 @@ func init() {
 	//RootCmd.MarkPersistentFlagRequired("token")
 	RootCmd.PersistentFlags().StringVarP(&flags.Endpoint, "endpoint", "e", "", "API endpoint")
 	//RootCmd.MarkPersistentFlagRequired("endpoint")
-	RootCmd.PersistentFlags().StringVar(&flags.AutoDiscoveryKey, "auto-discovery", "", "Auto discovery key for the agent")
+	RootCmd.PersistentFlags().StringVar(&flags.AutoDiscoveryKey, "auto-discovery", "", "Legacy marker to read auto-discovery.json; registration is no longer available")
+	_ = RootCmd.PersistentFlags().MarkHidden("auto-discovery")
+	_ = RootCmd.PersistentFlags().MarkDeprecated("auto-discovery", "registration is no longer available; existing installs read auto-discovery.json")
 	RootCmd.PersistentFlags().BoolVar(&flags.DisableAutoUpdate, "disable-auto-update", false, "Disable automatic updates")
 	RootCmd.PersistentFlags().BoolVar(&flags.RemoteControlEnabled, "enable-remote-control", false, "Enable remote control (terminal, files, and exec)")
 	RootCmd.PersistentFlags().BoolVar(&flags.DisableWebSsh, "disable-web-ssh", false, "Deprecated; use --enable-remote-control")

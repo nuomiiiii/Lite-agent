@@ -170,6 +170,46 @@ func TestIsContainerAndCgroup(t *testing.T) {
 	}
 }
 
+func TestOfficialLaunchdServiceUsesInstallDirectoryNotPlistOrder(t *testing.T) {
+	home := "/Users/lite"
+	bothExist := func(label string) bool {
+		return label == "com.komari.komari-agent" || label == "com.lite.lite-agent"
+	}
+
+	name, ok := officialLaunchdServiceForExecutable("/usr/local/lite-agent/Lite-agent", home, bothExist)
+	if !ok || name != newServiceName {
+		t.Fatalf("modern system layout = %q ok=%v, want lite-agent so leftover komari-agent can be retired", name, ok)
+	}
+
+	name, ok = officialLaunchdServiceForExecutable(filepath.Join(home, ".lite-agent", "Lite-agent"), home, bothExist)
+	if !ok || name != newServiceName {
+		t.Fatalf("modern user layout = %q ok=%v, want lite-agent", name, ok)
+	}
+
+	name, ok = officialLaunchdServiceForExecutable("/usr/local/komari/agent", home, bothExist)
+	if !ok || name != legacyServiceName {
+		t.Fatalf("legacy system layout = %q ok=%v, want komari-agent so directory relocate still runs", name, ok)
+	}
+
+	name, ok = officialLaunchdServiceForExecutable("/opt/custom/Lite-agent", home, bothExist)
+	if ok {
+		t.Fatalf("custom path must not match just because official plists exist, got %q", name)
+	}
+}
+
+func TestRetireLeftoverLegacyOnModernMacLayoutWhenNewPlistNotDetected(t *testing.T) {
+	t.Cleanup(restoreRelocateHooks)
+	lookupExecutable = func() (string, error) { return "/usr/local/lite-agent/Lite-agent", nil }
+	lookupStat = func(string) error { return os.ErrNotExist }
+	ctrl := &fakeController{legacy: true}
+	if err := retireLeftoverLegacy("darwin", ctrl); err != nil {
+		t.Fatal(err)
+	}
+	if len(ctrl.removed) != 1 || ctrl.removed[0] != "komari-agent" {
+		t.Fatalf("modern Lite-agent must still retire leftover komari-agent: %v", ctrl.removed)
+	}
+}
+
 func TestSystemdUnitStartsLiteAgentBinary(t *testing.T) {
 	unit := systemdUnit(spec{
 		Name:    "lite-agent",

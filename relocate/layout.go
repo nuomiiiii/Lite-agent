@@ -89,6 +89,33 @@ func detectPlan(goos, executable, home, programFiles string) (plan, bool) {
 	return plan{}, false
 }
 
+// officialLaunchdServiceForExecutable maps the current binary onto one of the
+// two official launchd labels. It does not scan LaunchDaemons; leftover
+// komari-agent plists must not hide a Lite-agent that is already on the new path.
+func officialLaunchdServiceForExecutable(executable, home string, plistExists func(label string) bool) (string, bool) {
+	execDir := filepath.Clean(filepath.Dir(executable))
+	legacy, modern := defaultLayouts("darwin", home, "")
+	for _, item := range modern {
+		if !sameDir(execDir, item.Dir, "darwin") {
+			continue
+		}
+		if plistExists(newPlistPrefix + newServiceName) {
+			return newServiceName, true
+		}
+		return "", false
+	}
+	for _, item := range legacy {
+		if !sameDir(execDir, item.Dir, "darwin") {
+			continue
+		}
+		if plistExists(legacyPlistPrefix + legacyServiceName) {
+			return legacyServiceName, true
+		}
+		return "", false
+	}
+	return "", false
+}
+
 func onModernLayout(goos, executable, home, programFiles string) bool {
 	execDir := filepath.Clean(filepath.Dir(executable))
 	_, modern := defaultLayouts(goos, home, programFiles)
@@ -185,6 +212,10 @@ func isContainer(stat func(string) error) bool {
 		}
 	}
 	return false
+}
+
+func LooksLikeContainer() bool {
+	return isContainer(statPath)
 }
 
 func LooksLikeExistingInstall() bool {

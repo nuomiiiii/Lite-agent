@@ -1,7 +1,7 @@
 package flags_pkg
 
 type Config struct {
-	AutoDiscoveryKey     string  `json:"auto_discovery_key" env:"AGENT_AUTO_DISCOVERY_KEY"`           // 自动发现密钥
+	AutoDiscoveryKey     string  `json:"auto_discovery_key" env:"AGENT_AUTO_DISCOVERY_KEY"`           // Deprecated: legacy marker to read auto-discovery.json; not a registration key
 	DisableAutoUpdate    bool    `json:"disable_auto_update" env:"AGENT_DISABLE_AUTO_UPDATE"`         // 禁用自动更新
 	RemoteControlEnabled bool    `json:"remote_control_enabled" env:"AGENT_REMOTE_CONTROL_ENABLED"`   // 启用远程控制（终端、文件、exec）
 	DisableWebSsh        bool    `json:"disable_web_ssh" env:"AGENT_DISABLE_WEB_SSH"`                 // 隐藏迁移输入：旧版禁用远程控制

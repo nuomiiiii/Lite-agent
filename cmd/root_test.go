@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"errors"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -128,36 +127,6 @@ func TestLoadEffectiveConfigPrecedence(t *testing.T) {
 				t.Fatalf("DisableAutoUpdate = %v, want %v", config.DisableAutoUpdate, tt.want)
 			}
 		})
-	}
-}
-
-func TestAutoDiscoveryUsesSeparateCloudflareAccessHeaders(t *testing.T) {
-	originalKey := flags.AutoDiscoveryKey
-	originalID := flags.CFAccessClientID
-	originalSecret := flags.CFAccessClientSecret
-	flags.AutoDiscoveryKey = "discovery-key"
-	flags.CFAccessClientID = "access-id"
-	flags.CFAccessClientSecret = "access-secret"
-	t.Cleanup(func() {
-		flags.AutoDiscoveryKey = originalKey
-		flags.CFAccessClientID = originalID
-		flags.CFAccessClientSecret = originalSecret
-	})
-
-	request, err := http.NewRequest(http.MethodPost, "https://example.com/api/clients/register", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	authorizeAutoDiscoveryRequest(request)
-
-	if got := request.Header.Get("Authorization"); got != "Bearer discovery-key" {
-		t.Fatalf("Authorization = %q", got)
-	}
-	if got := request.Header.Get("CF-Access-Client-Id"); got != "access-id" {
-		t.Fatalf("CF-Access-Client-Id = %q", got)
-	}
-	if got := request.Header.Get("CF-Access-Client-Secret"); got != "access-secret" {
-		t.Fatalf("CF-Access-Client-Secret = %q", got)
 	}
 }
 
@@ -598,5 +567,50 @@ func TestPriorHostInstallKeepsRemoteControlOn(t *testing.T) {
 	enabled, ok, err := remotecontrol.Read(path)
 	if err != nil || !ok || !enabled {
 		t.Fatalf("prior host install must persist remote-control.state enabled=%t ok=%t err=%v", enabled, ok, err)
+	}
+}
+
+func TestLoadEffectiveConfigReadsLegacyAutoDiscoveryMarker(t *testing.T) {
+	t.Setenv("AGENT_CONFIG_FILE", "")
+	t.Setenv("AGENT_AUTO_DISCOVERY_KEY", "")
+	t.Setenv("AGENT_TOKEN", "")
+	withIsolatedRemoteControlState(t)
+
+	configPath := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(configPath, []byte(`{"endpoint":"http://example","auto_discovery_key":"legacy-key"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := &pkg_flags.Config{ConfigFile: configPath}
+	command := &cobra.Command{Use: "test"}
+	command.Flags().StringVar(&config.Token, "token", "", "")
+	command.Flags().StringVar(&config.AutoDiscoveryKey, "auto-discovery", "", "")
+	command.Flags().StringVar(&config.ConfigFile, "config", configPath, "")
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Token != "" {
+		t.Fatalf("JSON without token must leave Token empty, got %q", config.Token)
+	}
+	if config.AutoDiscoveryKey != "legacy-key" {
+		t.Fatalf("JSON auto_discovery_key = %q", config.AutoDiscoveryKey)
+	}
+
+	t.Setenv("AGENT_AUTO_DISCOVERY_KEY", "env-key")
+	config = &pkg_flags.Config{}
+	command = &cobra.Command{Use: "test"}
+	command.Flags().StringVar(&config.Token, "token", "", "")
+	command.Flags().StringVar(&config.AutoDiscoveryKey, "auto-discovery", "", "")
+	command.Flags().StringVar(&config.ConfigFile, "config", "", "")
+	if err := command.ParseFlags(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadEffectiveConfig(command, config); err != nil {
+		t.Fatal(err)
+	}
+	if config.AutoDiscoveryKey != "env-key" {
+		t.Fatalf("AGENT_AUTO_DISCOVERY_KEY = %q", config.AutoDiscoveryKey)
 	}
 }

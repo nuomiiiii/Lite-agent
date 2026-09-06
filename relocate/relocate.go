@@ -89,13 +89,20 @@ func doRelocate(goos string, args, environ []string, ctrl controller) (bool, err
 		return false, nil
 	}
 
+	collected, err := ctrl.Collect(planned.From.Service)
+	if err != nil {
+		collected = spec{}
+	}
+	if err := requireSavedIdentityForLegacyLaunch(args, environ, collected, planned.From.Dir); err != nil {
+		return false, err
+	}
+
 	newBinary := filepath.Join(planned.To.Dir, planned.To.BinaryName)
 	if ctrl.Running(planned.To.Service) {
 		log.Printf("new service %s already running; handing off from %s", planned.To.Service, planned.From.Service)
 		if err := os.MkdirAll(planned.To.Dir, 0o755); err != nil {
 			return false, fmt.Errorf("create %s: %w", planned.To.Dir, err)
 		}
-		collected, _ := ctrl.Collect(planned.From.Service)
 		if err := copySidecars(planned.From.Dir, planned.To.Dir, goos, sidecarExtras(args, collected)); err != nil {
 			return false, err
 		}
@@ -117,10 +124,6 @@ func doRelocate(goos string, args, environ []string, ctrl controller) (bool, err
 	}
 	if goos != "windows" {
 		_ = os.Chmod(newBinary, 0o755)
-	}
-	collected, err := ctrl.Collect(planned.From.Service)
-	if err != nil {
-		collected = spec{}
 	}
 	if err := copySidecars(planned.From.Dir, planned.To.Dir, goos, sidecarExtras(args, collected)); err != nil {
 		return false, err

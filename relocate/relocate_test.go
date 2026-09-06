@@ -71,6 +71,18 @@ func restoreRelocateHooks() {
 	detectPlanFn = detectPlan
 }
 
+func sameStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestDoRelocateSkipsContainerCustomServiceAndMissingLegacy(t *testing.T) {
 	t.Cleanup(restoreRelocateHooks)
 	lookupExecutable = func() (string, error) { return "/opt/komari/agent", nil }
@@ -331,5 +343,96 @@ func TestDecodeNssmOutput(t *testing.T) {
 	got := decodeNssmOutput(buf)
 	if got != "-e panel.example.com -t token" {
 		t.Fatalf("utf16 = %q", got)
+	}
+}
+
+func TestDoRelocateKeepsAutoDiscoveryMarkerAndIdentityFile(t *testing.T) {
+	t.Cleanup(restoreRelocateHooks)
+
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	src := filepath.Join(oldDir, "agent")
+	if err := os.WriteFile(src, []byte("old-agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	identity := []byte(`{"uuid":"u","token":"saved-token"}`)
+	if err := os.WriteFile(filepath.Join(oldDir, "auto-discovery.json"), identity, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lookupExecutable = func() (string, error) { return src, nil }
+	lookupStat = func(string) error { return os.ErrNotExist }
+	detectPlanFn = func(string, string, string, string) (plan, bool) {
+		return plan{
+			From: layout{Dir: oldDir, BinaryName: "agent", Service: "komari-agent"},
+			To:   layout{Dir: newDir, BinaryName: "Lite-agent", Service: "lite-agent"},
+		}, true
+	}
+
+	ctrl := &fakeController{
+		legacy:       true,
+		detected:     true,
+		detectedName: "komari-agent",
+		collect: spec{
+			Args:        []string{"-e", "panel.example.com", "--auto-discovery", "legacy-key"},
+			Environment: []string{"AGENT_AUTO_DISCOVERY_KEY=legacy-key"},
+		},
+	}
+	ok, err := doRelocate("linux", []string{src, "-e", "panel.example.com", "--auto-discovery", "legacy-key"}, nil, ctrl)
+	if err != nil || !ok {
+		t.Fatalf("relocate = %v, %v", ok, err)
+	}
+	if ctrl.installed == nil {
+		t.Fatal("expected new service to be installed")
+	}
+	if !sameStringSlice(ctrl.installed.Args, []string{"-e", "panel.example.com", "--auto-discovery", "legacy-key"}) {
+		t.Fatalf("relocated args = %v, want original auto-discovery marker kept", ctrl.installed.Args)
+	}
+	if !sameStringSlice(ctrl.installed.Environment, []string{"AGENT_AUTO_DISCOVERY_KEY=legacy-key"}) {
+		t.Fatalf("relocated env = %v, want original auto-discovery env kept", ctrl.installed.Environment)
+	}
+	got, err := os.ReadFile(filepath.Join(newDir, "auto-discovery.json"))
+	if err != nil || !bytes.Equal(got, identity) {
+		t.Fatalf("identity sidecar = %q err=%v", got, err)
+	}
+}
+
+func TestDoRelocateStopsWhenLegacyIdentityInvalid(t *testing.T) {
+	t.Cleanup(restoreRelocateHooks)
+
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	src := filepath.Join(oldDir, "agent")
+	if err := os.WriteFile(src, []byte("old-agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "auto-discovery.json"), []byte(`{"uuid":"u"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lookupExecutable = func() (string, error) { return src, nil }
+	lookupStat = func(string) error { return os.ErrNotExist }
+	detectPlanFn = func(string, string, string, string) (plan, bool) {
+		return plan{
+			From: layout{Dir: oldDir, BinaryName: "agent", Service: "komari-agent"},
+			To:   layout{Dir: newDir, BinaryName: "Lite-agent", Service: "lite-agent"},
+		}, true
+	}
+
+	ctrl := &fakeController{
+		legacy:       true,
+		detected:     true,
+		detectedName: "komari-agent",
+		collect:      spec{Args: []string{"-e", "panel.example.com", "--auto-discovery", "legacy-key"}},
+	}
+	ok, err := doRelocate("linux", []string{src, "-e", "panel.example.com", "--auto-discovery", "legacy-key"}, nil, ctrl)
+	if err == nil || ok {
+		t.Fatalf("invalid identity must stop relocation, got ok=%v err=%v", ok, err)
+	}
+	if ctrl.installed != nil {
+		t.Fatal("must not install a new service when saved identity is incomplete")
+	}
+	if len(ctrl.disabled) != 0 || len(ctrl.removed) != 0 {
+		t.Fatalf("must not retire the old service: disabled=%v removed=%v", ctrl.disabled, ctrl.removed)
 	}
 }
