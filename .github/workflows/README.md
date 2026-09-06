@@ -15,7 +15,7 @@ The important design split is:
 | Workflow | Trigger | Main output | Prerelease handling |
 | --- | --- | --- | --- |
 | `build.yml` | Push to `main` | CI build artifacts for the pushed commit | Not a release workflow |
-| `snapshot.yml` | Push to `main`, manual dispatch | One snapshot prerelease plus `ghcr.io/...:snapshot` | Creates prereleases only |
+| `snapshot.yml` | Manual dispatch only | One snapshot prerelease plus `ghcr.io/...:snapshot` | Creates prereleases only |
 | `release.yml` | Published GitHub release | Release binary assets | Skips prereleases |
 | `release-docker.yml` | Published GitHub release, manual dispatch | Stable Docker image tags | Skips prerelease release events |
 | `generate-release-notes.yml` | Published GitHub release, manual dispatch | Generated release notes | Skips prerelease release events |
@@ -75,9 +75,8 @@ Purpose: publish the latest development build from `main`.
 
 Trigger:
 
-- Runs on push to `main`, except commits whose message starts with `release:`
-  or contains `[skip snapshot]`.
-- Can be run manually with `workflow_dispatch`.
+- Manual `workflow_dispatch` only. Pushing `main` does not publish a snapshot.
+- `release:` and `[skip snapshot]` are no longer used to suppress snapshots.
 
 Race protection:
 

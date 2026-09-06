@@ -2,10 +2,6 @@ name: Publish Snapshot
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - snapshot-2.1.11-return-route
 
 permissions:
   contents: write
@@ -21,7 +17,6 @@ concurrency:
 
 jobs:
   validate-ref:
-    if: ${{ github.event_name == 'workflow_dispatch' || (!startsWith(github.event.head_commit.message, 'release:') && !contains(github.event.head_commit.message, '[skip snapshot]')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -39,8 +34,8 @@ jobs:
 
       - name: Ensure snapshot target is current
         run: |
-          if [ "${GITHUB_REF_NAME}" != "main" ] && [ "${GITHUB_REF_NAME}" != "snapshot-2.1.11-return-route" ]; then
-            echo "Unsupported snapshot branch: ${GITHUB_REF_NAME}"
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "Snapshot builds must run on main, got ${GITHUB_REF_NAME}"
             exit 1
           fi
 
@@ -50,7 +45,7 @@ jobs:
           if [ "${GITHUB_SHA}" != "${MAIN_SHA}" ]; then
             echo "Snapshot builds must use the current main commit."
             echo "Workflow SHA: ${GITHUB_SHA}"
-          echo "Current branch: ${MAIN_SHA}"
+            echo "Current branch: ${MAIN_SHA}"
             exit 1
           fi
 
@@ -63,11 +58,7 @@ jobs:
       - name: Generate snapshot version
         id: version
         run: |
-          if [ "${GITHUB_REF_NAME}" = "snapshot-2.1.11-return-route" ]; then
-            VERSION="Snapshot-2.1.11-$(date -u +%y%m%d%H%M)"
-          else
-            VERSION="Snapshot-$(date -u +%y%m%d%H%M)"
-          fi
+          VERSION="Snapshot-$(date -u +%y%m%d%H%M)"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Snapshot version: ${VERSION}"
 
