@@ -126,7 +126,7 @@ export AGENT_TOKEN="your-token"
 | `custom_ipv4` | `AGENT_CUSTOM_IPV4` | `--custom-ipv4` | 自定义上报 IPv4 地址 |
 | `custom_ipv6` | `AGENT_CUSTOM_IPV6` | `--custom-ipv6` | 自定义上报 IPv6 地址 |
 | `get_ip_addr_from_nic` | `AGENT_GET_IP_ADDR_FROM_NIC` | `--get-ip-addr-from-nic` | 从网卡获取上报 IP 地址 |
-| `auto_discovery_key` | `AGENT_AUTO_DISCOVERY_KEY` | `--auto-discovery` | 已停用。以前用自动发现装的节点，升级后仍用原来的身份上线。新装请用后台生成的带 Token 的命令。 |
+| `auto_discovery_key` | `AGENT_AUTO_DISCOVERY_KEY` | `--auto-discovery` | 已下线。原先自动发现带上来的机器升级后仍能上报；若离线请重新安装 Agent。 |
 | `cf_access_client_id` | `AGENT_CF_ACCESS_CLIENT_ID` | `--cf-access-client-id` | Cloudflare Access Service Token Client ID |
 | `cf_access_client_secret` | `AGENT_CF_ACCESS_CLIENT_SECRET` | `--cf-access-client-secret` | Cloudflare Access Service Token Client Secret，必须与 Client ID 同时配置 |
 | `custom_dns` | `AGENT_CUSTOM_DNS` | `--custom-dns` | 自定义 DNS 服务器 |
@@ -209,6 +209,6 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 | `2.3.0.1` | 回程探测会附带是否到达目标。目标是域名时，面板也能判断探测是否走到解析后的 IP。 |
 | `2.3.0.2` | 回程探测只认本次探测的 ICMP 回包，避免把无关或上一跳晚到的包当成路径跳点。 |
 | `2.3.1.0` | 远程控制改为正向开关。已装节点没写过禁止远程的，升级后仍开启；旧的 `disable_web_ssh` 会迁到新配置。新装由 Lite 一键命令明确写入开启或关闭。从默认 komari-agent 路径升级时，仍会带走节点身份、流量统计和配置文件。文件管理增加队列、并发上限和列表分页。远程命令会记下执行状态；同一条命令不会因重试再跑一遍，进程中断后会补报执行状态未知。Windows 命令输出会尽量转成可读文本。是否允许远程由站点开关和节点本地开关共同决定。Lite 需升级至 Lite 2.3.1 或更高版本。 |
-| `2.3.1.1` | 自动发现不再给新机器注册。已经装上的节点，升级后还用原来的身份上线，不用改启动参数。起不来就到面板打开那台节点，复制带地址和 Token 的安装命令重装。新装和重建 Docker 都用后台添加节点时生成的命令。从旧安装路径升级时会带走原来的节点身份；身份文件不完整就不会搬家。 |
+| `2.3.1.1` | 已下线自动发现功能，不再注册新节点。原先自动发现带上来的机器，升级后仍能正常上报，若遇到离线，请重新安装 Agent。 |
 
 完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-agent/releases)。
