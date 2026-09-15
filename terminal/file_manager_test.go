@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +43,80 @@ func responseOK(t *testing.T, response map[string]any) bool {
 		t.Fatalf("response has no boolean ok field: %#v", response)
 	}
 	return ok
+}
+
+func offsetPtr(value int) *int {
+	return &value
+}
+
+func TestBrowserUploadChunksWithoutOffsetAppendSequentially(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "browser-upload.bin")
+	first := make([]byte, 256*1024)
+	for i := range first {
+		first[i] = 'a'
+	}
+	second := []byte("x")
+	writer := &recordingFileWriter{}
+	manager := newFileManager(writer)
+	defer manager.close()
+
+	manager.startUpload(fileRequest{Type: "file.upload.start", ID: "start", Path: target, Size: int64(len(first) + len(second))})
+	uploadID := uploadIDFromResponse(t, writer.last(t))
+	for index, data := range [][]byte{first, second} {
+		payload, err := json.Marshal(map[string]any{
+			"type":      "file.upload.chunk",
+			"id":        "chunk",
+			"upload_id": uploadID,
+			"data":      base64.StdEncoding.EncodeToString(data),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		manager.handle(payload)
+		if !responseOK(t, writer.last(t)) {
+			t.Fatalf("legacy browser chunk %d failed: %#v", index, writer.last(t))
+		}
+	}
+	manager.finishUpload(fileRequest{Type: "file.upload.finish", ID: "finish", UploadID: uploadID})
+	if !responseOK(t, writer.last(t)) {
+		t.Fatalf("legacy browser finish failed: %#v", writer.last(t))
+	}
+	actual, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actual) != len(first)+len(second) || actual[len(actual)-1] != 'x' {
+		t.Fatalf("legacy browser upload content length=%d last=%q", len(actual), actual[len(actual)-1:])
+	}
+}
+
+func TestUploadExplicitZeroOffsetAfterProgressIsRejected(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "rewind.bin")
+	writer := &recordingFileWriter{}
+	manager := newFileManager(writer)
+	defer manager.close()
+
+	manager.startUpload(fileRequest{Type: "file.upload.start", ID: "start", Path: target, Size: 6})
+	uploadID := uploadIDFromResponse(t, writer.last(t))
+	manager.uploadChunk(fileRequest{Type: "file.upload.chunk", ID: "c0", UploadID: uploadID, Offset: offsetPtr(0), Data: base64.StdEncoding.EncodeToString([]byte("abc"))})
+	if !responseOK(t, writer.last(t)) {
+		t.Fatalf("first chunk failed: %#v", writer.last(t))
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":      "file.upload.chunk",
+		"id":        "c1",
+		"upload_id": uploadID,
+		"offset":    0,
+		"data":      base64.StdEncoding.EncodeToString([]byte("xyz")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.handle(payload)
+	response := writer.last(t)
+	if responseOK(t, response) || response["error"] != "upload chunk offset mismatch" {
+		t.Fatalf("explicit offset 0 after progress should fail: %#v", response)
+	}
 }
 
 func uploadIDFromResponse(t *testing.T, response map[string]any) string {
@@ -227,6 +302,50 @@ func TestRegularUploadCompletes(t *testing.T) {
 	}
 	if string(actual) != string(payload) {
 		t.Fatalf("uploaded content = %q, want %q", actual, payload)
+	}
+}
+
+func TestUploadIdenticalChunksAtDifferentOffsets(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "repeat.bin")
+	chunk := []byte("abc")
+	writer := &recordingFileWriter{}
+	manager := newFileManager(writer)
+	defer manager.close()
+
+	manager.startUpload(fileRequest{Type: "file.upload.start", ID: "start", Path: target, Size: int64(len(chunk) * 2)})
+	uploadID := uploadIDFromResponse(t, writer.last(t))
+	manager.uploadChunk(fileRequest{Type: "file.upload.chunk", ID: "c0", UploadID: uploadID, Offset: offsetPtr(0), Data: base64.StdEncoding.EncodeToString(chunk)})
+	if !responseOK(t, writer.last(t)) {
+		t.Fatalf("first chunk failed: %#v", writer.last(t))
+	}
+	manager.uploadChunk(fileRequest{Type: "file.upload.chunk", ID: "c1", UploadID: uploadID, Offset: offsetPtr(3), Data: base64.StdEncoding.EncodeToString(chunk)})
+	if !responseOK(t, writer.last(t)) {
+		t.Fatalf("second identical chunk failed: %#v", writer.last(t))
+	}
+	manager.finishUpload(fileRequest{Type: "file.upload.finish", ID: "finish", UploadID: uploadID})
+	if !responseOK(t, writer.last(t)) {
+		t.Fatalf("finish failed: %#v", writer.last(t))
+	}
+	actual, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(actual) != "abcabc" {
+		t.Fatalf("uploaded content = %q, want abcabc", actual)
+	}
+}
+
+func TestUploadChunkRejectsOffsetMismatch(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "skip.bin")
+	writer := &recordingFileWriter{}
+	manager := newFileManager(writer)
+	defer manager.close()
+
+	manager.startUpload(fileRequest{Type: "file.upload.start", ID: "start", Path: target, Size: 6})
+	uploadID := uploadIDFromResponse(t, writer.last(t))
+	manager.uploadChunk(fileRequest{Type: "file.upload.chunk", ID: "c0", UploadID: uploadID, Offset: offsetPtr(3), Data: base64.StdEncoding.EncodeToString([]byte("abc"))})
+	if responseOK(t, writer.last(t)) {
+		t.Fatal("chunk at offset 3 should fail when received is 0")
 	}
 }
 

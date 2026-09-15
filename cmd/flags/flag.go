@@ -3,7 +3,7 @@ package flags_pkg
 type Config struct {
 	AutoDiscoveryKey     string  `json:"auto_discovery_key" env:"AGENT_AUTO_DISCOVERY_KEY"`           // Deprecated: legacy marker to read auto-discovery.json; not a registration key
 	DisableAutoUpdate    bool    `json:"disable_auto_update" env:"AGENT_DISABLE_AUTO_UPDATE"`         // 禁用自动更新
-	RemoteControlEnabled bool    `json:"remote_control_enabled" env:"AGENT_REMOTE_CONTROL_ENABLED"`   // 启用远程控制（终端、文件、exec）
+	RemoteControlEnabled bool    `json:"remote_control_enabled" env:"AGENT_REMOTE_CONTROL_ENABLED"`   // 启用远程控制（终端、文件、exec、MCP）
 	DisableWebSsh        bool    `json:"disable_web_ssh" env:"AGENT_DISABLE_WEB_SSH"`                 // 隐藏迁移输入：旧版禁用远程控制
 	MemoryModeAvailable  bool    `json:"memory_mode_available" env:"AGENT_MEMORY_MODE_AVAILABLE"`     // [deprecated] 已弃用，请使用 MemoryIncludeCache
 	Token                string  `json:"token" env:"AGENT_TOKEN"`                                     // Token
@@ -37,7 +37,7 @@ type Config struct {
 
 var GlobalConfig = &Config{}
 
-// RemoteControlEnabled reports whether remote terminal, files, and exec are on.
+// RemoteControlEnabled reports whether remote terminal, files, exec, and MCP are on.
 // This is the runtime source of truth; do not check DisableWebSsh after config load.
 func RemoteControlEnabled() bool {
 	return GlobalConfig != nil && GlobalConfig.RemoteControlEnabled

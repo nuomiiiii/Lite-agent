@@ -22,6 +22,15 @@ func TestBasicInfoIncludesRemoteProtocol(t *testing.T) {
 	if !enabled {
 		t.Fatal("remote_control_enabled should follow the positive flag")
 	}
+	if _, ok := data["mcp_full"]; ok {
+		t.Fatal("basic info must not include mcp_full; 2.3.2 Lite would reject the whole update")
+	}
+	if _, ok := data["mcp_full_version"]; ok {
+		t.Fatal("basic info must not include mcp_full_version; 2.3.2 Lite would reject the whole update")
+	}
+	if _, ok := data["mcp_enabled"]; ok {
+		t.Fatal("basic info must not include mcp_enabled; 2.3.2 Lite would reject the whole update")
+	}
 	if _, ok := data["remote_control_protected"]; ok {
 		t.Fatal("basic info must not report remote_control_protected")
 	}

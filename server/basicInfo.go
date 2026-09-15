@@ -85,6 +85,8 @@ func buildBasicInfoMap() map[string]interface{} {
 		"version":                update.CurrentVersion,
 		"remote_protocol":        2,
 		"remote_control_enabled": pkg_flags.RemoteControlEnabled(),
+		// mcp_full is advertised on pull, not basic info: 2.3.2 Lite updates
+		// every map key as a column and would reject the whole report.
 	}
 }
 

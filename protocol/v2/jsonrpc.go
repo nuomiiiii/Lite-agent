@@ -14,6 +14,11 @@ const (
 	MethodAgentRouteResult  = "agent.routeResult"
 	MethodAgentTaskResult   = "agent.taskResult"
 	MethodAgentExec         = "agent.exec"
+	MethodAgentMCPExec      = "agent.mcp.exec"
+	MethodAgentMCPCancel    = "agent.mcp.cancel"
+	MethodAgentMCPRenew     = "agent.mcp.renew"
+	MethodAgentMCPRevoke    = "agent.mcp.revoke"
+	MethodAgentMCPFile      = "agent.mcp.file"
 	MethodAgentPing         = "agent.ping"
 	MethodAgentRoute        = "agent.route"
 	MethodAgentMessage      = "agent.message"
@@ -22,6 +27,9 @@ const (
 	MethodAgentConfig       = "agent.config"
 	MethodAgentConfigResult = "agent.configResult"
 	MethodAgentPull         = "agent.pull"
+
+	CapabilityMCPFull = "mcp_full"
+	MCPFullVersion    = 1
 
 	TaskResultStatusFinished    = "finished"
 	TaskResultStatusInterrupted = "interrupted"
@@ -103,6 +111,44 @@ type RouteParams struct {
 type RemoteRequestParams struct {
 	RequestID string `json:"request_id"`
 	Ticket    string `json:"ticket"`
+}
+
+type MCPExecParams struct {
+	TaskID                 string `json:"task_id"`
+	LeaseID                string `json:"lease_id"`
+	OperationID            string `json:"operation_id"`
+	AgentUUID              string `json:"agent_uuid"`
+	Mode                   string `json:"mode,omitempty"`
+	Command                string `json:"command"`
+	Cwd                    string `json:"cwd,omitempty"`
+	ExpiresAt              string `json:"expires_at,omitempty"`
+	OperationDeadline      string `json:"operation_deadline,omitempty"`
+	ExecutionLeaseDeadline string `json:"execution_lease_deadline,omitempty"`
+	RequestDigest          string `json:"request_digest,omitempty"`
+}
+
+type MCPCancelParams struct {
+	OperationID string `json:"operation_id"`
+	LeaseID     string `json:"lease_id"`
+}
+
+type MCPRenewParams struct {
+	LeaseID                string `json:"lease_id"`
+	ExecutionLeaseDeadline string `json:"execution_lease_deadline,omitempty"`
+}
+
+type MCPRevokeParams struct {
+	LeaseID string `json:"lease_id"`
+}
+
+type MCPFileParams struct {
+	TaskID                 string          `json:"task_id"`
+	LeaseID                string          `json:"lease_id"`
+	OperationID            string          `json:"operation_id"`
+	Request                json.RawMessage `json:"request"`
+	ExpiresAt              string          `json:"expires_at,omitempty"`
+	OperationDeadline      string          `json:"operation_deadline,omitempty"`
+	ExecutionLeaseDeadline string          `json:"execution_lease_deadline,omitempty"`
 }
 
 func NewNotification(method string, params interface{}) []byte {

@@ -362,7 +362,7 @@ func init() {
 	_ = RootCmd.PersistentFlags().MarkHidden("auto-discovery")
 	_ = RootCmd.PersistentFlags().MarkDeprecated("auto-discovery", "registration is no longer available; existing installs read auto-discovery.json")
 	RootCmd.PersistentFlags().BoolVar(&flags.DisableAutoUpdate, "disable-auto-update", false, "Disable automatic updates")
-	RootCmd.PersistentFlags().BoolVar(&flags.RemoteControlEnabled, "enable-remote-control", false, "Enable remote control (terminal, files, and exec)")
+	RootCmd.PersistentFlags().BoolVar(&flags.RemoteControlEnabled, "enable-remote-control", false, "Enable remote control (terminal, files, exec, and MCP)")
 	RootCmd.PersistentFlags().BoolVar(&flags.DisableWebSsh, "disable-web-ssh", false, "Deprecated; use --enable-remote-control")
 	_ = RootCmd.PersistentFlags().MarkHidden("disable-web-ssh")
 	_ = RootCmd.PersistentFlags().MarkDeprecated("disable-web-ssh", "use --enable-remote-control instead")

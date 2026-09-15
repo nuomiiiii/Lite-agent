@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	pkg_flags "github.com/nuomiiiii/lite-agent/cmd/flags"
 	"github.com/nuomiiiii/lite-agent/dnsresolver"
 	"github.com/nuomiiiii/lite-agent/monitoring"
 	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
@@ -41,7 +42,33 @@ const (
 	remoteWebSocketReadLimit    = 2 << 20
 )
 
-var v2PullCapabilities = []string{"exec", "ping", "route", "message", "event", "remote", "files", "config"}
+var v2BasePullCapabilities = []string{"exec", "ping", "route", "message", "event", "remote", "files", "config"}
+
+func currentV2PullCapabilities() ([]string, map[string]int) {
+	caps := append([]string(nil), v2BasePullCapabilities...)
+	versions := map[string]int{}
+	if pkg_flags.RemoteControlEnabled() {
+		caps = append(caps, v2.CapabilityMCPFull)
+		versions[v2.CapabilityMCPFull] = v2.MCPFullVersion
+	}
+	return caps, versions
+}
+
+func v2PullPayload(ackIDs []string) []byte {
+	caps, versions := currentV2PullCapabilities()
+	return v2.NewRequest(fmt.Sprintf("pull-%d", time.Now().UnixNano()), v2.MethodAgentPull, map[string]interface{}{
+		"capabilities":        caps,
+		"capability_versions": versions,
+		"ack_event_ids":       ackIDs,
+	})
+}
+
+func advertiseV2PullCapabilities(conn *ws.SafeConn) error {
+	if conn == nil {
+		return nil
+	}
+	return conn.WriteMessage(websocket.TextMessage, v2PullPayload(snapshotV2AckEventIDs()))
+}
 
 type agentWebSocketSession struct {
 	conn     *ws.SafeConn
@@ -211,13 +238,8 @@ func runV2PullLoop(ctx context.Context) {
 			return
 		default:
 		}
-		pullID := fmt.Sprintf("pull-%d", time.Now().UnixNano())
 		ackIDs := snapshotV2AckEventIDs()
-		payload := v2.NewRequest(pullID, v2.MethodAgentPull, map[string]interface{}{
-			"capabilities":  v2PullCapabilities,
-			"ack_event_ids": ackIDs,
-		})
-		resp, err := postV2RequestContext(ctx, payload)
+		resp, err := postV2RequestContext(ctx, v2PullPayload(ackIDs))
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -390,6 +412,10 @@ func handleWebSocketMessages(conn *ws.SafeConn, done chan<- struct{}) {
 		log.Println("Failed to send heartbeat:", err)
 		return
 	}
+	if err := advertiseV2PullCapabilities(conn); err != nil {
+		log.Println("Failed to advertise v2 pull capabilities:", err)
+		return
+	}
 	for {
 		_, message_raw, err := conn.ReadMessage()
 		if err != nil {
@@ -410,6 +436,9 @@ func handleWebSocketMessages(conn *ws.SafeConn, done chan<- struct{}) {
 		}
 		if message.JSONRPC != v2.Version {
 			log.Printf("ignored non-v2 websocket message method=%q", message.Method)
+			continue
+		}
+		if message.Method == "" {
 			continue
 		}
 		eventID, _ := message.ID.(string)
@@ -437,6 +466,65 @@ func processV2Event(conn *ws.SafeConn, method string, params interface{}, eventI
 		run, ack := acceptTask(p.TaskID)
 		if run {
 			go executeAcceptedTask(p.TaskID, p.Command)
+		}
+		if !ack {
+			forgetV2Event(eventID)
+			return false
+		}
+		return true
+	case v2.MethodAgentMCPExec:
+		var p v2.MCPExecParams
+		if err := v2.BindParams(params, &p); err != nil {
+			forgetV2Event(eventID)
+			log.Printf("bad v2 mcp exec params: %v", err)
+			return false
+		}
+		run, ack := acceptMCPExec(p)
+		if run {
+			go executeMCPExec(p)
+		}
+		if !ack {
+			forgetV2Event(eventID)
+			return false
+		}
+		return true
+	case v2.MethodAgentMCPCancel:
+		var p v2.MCPCancelParams
+		if err := v2.BindParams(params, &p); err != nil {
+			forgetV2Event(eventID)
+			log.Printf("bad v2 mcp cancel params: %v", err)
+			return false
+		}
+		_ = cancelMCPOperation(p.OperationID)
+		return true
+	case v2.MethodAgentMCPRenew:
+		var p v2.MCPRenewParams
+		if err := v2.BindParams(params, &p); err != nil {
+			forgetV2Event(eventID)
+			log.Printf("bad v2 mcp renew params: %v", err)
+			return false
+		}
+		renewMCPLease(p.LeaseID, parseMCPDeadline(p.ExecutionLeaseDeadline))
+		return true
+	case v2.MethodAgentMCPRevoke:
+		var p v2.MCPRevokeParams
+		if err := v2.BindParams(params, &p); err != nil {
+			forgetV2Event(eventID)
+			log.Printf("bad v2 mcp revoke params: %v", err)
+			return false
+		}
+		revokeMCPLease(p.LeaseID)
+		return true
+	case v2.MethodAgentMCPFile:
+		var p v2.MCPFileParams
+		if err := v2.BindParams(params, &p); err != nil {
+			forgetV2Event(eventID)
+			log.Printf("bad v2 mcp file params: %v", err)
+			return false
+		}
+		run, ack := acceptMCPFile(p)
+		if run {
+			go executeMCPFile(p)
 		}
 		if !ack {
 			forgetV2Event(eventID)

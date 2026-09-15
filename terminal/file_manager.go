@@ -46,8 +46,19 @@ type fileRequest struct {
 	Size        int64  `json:"size,omitempty"`
 	Overwrite   bool   `json:"overwrite,omitempty"`
 	Recursive   bool   `json:"recursive,omitempty"`
-	Offset      int    `json:"offset,omitempty"`
+	Offset      *int   `json:"offset,omitempty"`
 	Limit       int    `json:"limit,omitempty"`
+	Encoding    string `json:"encoding,omitempty"`
+	Content     string `json:"content,omitempty"`
+	MaxBytes    int    `json:"max_bytes,omitempty"`
+	DownloadID  string `json:"download_id,omitempty"`
+}
+
+func fileRequestOffset(request fileRequest) int {
+	if request.Offset == nil || *request.Offset < 0 {
+		return 0
+	}
+	return *request.Offset
 }
 
 type fileEntry struct {
@@ -77,28 +88,37 @@ type fileResponseWriter interface {
 	writeJSON(value any) error
 }
 
+type downloadHandle struct {
+	file *os.File
+	path string
+	size int64
+}
+
 type fileManager struct {
 	writer              fileResponseWriter
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	mu                  sync.Mutex
 	uploads             map[string]*uploadState
+	downloads           map[string]*downloadHandle
 	jobs                chan []byte
 	closed              bool
 	uploadCount         int
 	reservedUploadBytes int64
 	activeDownloads     int
 	beforeHandle        func()
+	opCtx               context.Context
 }
 
 func newFileManager(writer fileResponseWriter) *fileManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &fileManager{
-		writer:  writer,
-		ctx:     ctx,
-		cancel:  cancel,
-		uploads: make(map[string]*uploadState),
-		jobs:    make(chan []byte, fileQueueSize),
+		writer:    writer,
+		ctx:       ctx,
+		cancel:    cancel,
+		uploads:   make(map[string]*uploadState),
+		downloads: make(map[string]*downloadHandle),
+		jobs:      make(chan []byte, fileQueueSize),
 	}
 	for i := 0; i < fileWorkerCount; i++ {
 		go manager.worker()
@@ -111,7 +131,9 @@ func (manager *fileManager) close() {
 	manager.mu.Lock()
 	manager.closed = true
 	uploads := manager.uploads
+	downloads := manager.downloads
 	manager.uploads = make(map[string]*uploadState)
+	manager.downloads = make(map[string]*downloadHandle)
 	manager.uploadCount = 0
 	manager.reservedUploadBytes = 0
 	manager.activeDownloads = 0
@@ -121,6 +143,11 @@ func (manager *fileManager) close() {
 		_ = upload.file.Close()
 		_ = os.Remove(upload.tempPath)
 		upload.mu.Unlock()
+	}
+	for _, handle := range downloads {
+		if handle != nil && handle.file != nil {
+			_ = handle.file.Close()
+		}
 	}
 }
 
@@ -136,7 +163,7 @@ func (manager *fileManager) worker() {
 			if manager.beforeHandle != nil {
 				manager.beforeHandle()
 			}
-			manager.handle(payload)
+			manager.handleCtx(manager.ctx, payload)
 		}
 	}
 }
@@ -163,6 +190,30 @@ func isFileMessage(messageType string) bool {
 }
 
 func (manager *fileManager) handle(payload []byte) {
+	manager.handleCtx(manager.ctx, payload)
+}
+
+func (manager *fileManager) operationContext() context.Context {
+	if manager.opCtx != nil {
+		return manager.opCtx
+	}
+	if manager.ctx != nil {
+		return manager.ctx
+	}
+	return context.Background()
+}
+
+func (manager *fileManager) handleCtx(ctx context.Context, payload []byte) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	manager.opCtx = ctx
+	if err := ctx.Err(); err != nil {
+		var probe fileRequest
+		_ = json.Unmarshal(payload, &probe)
+		manager.respond(probe, nil, err)
+		return
+	}
 	var request fileRequest
 	if err := json.Unmarshal(payload, &request); err != nil || request.ID == "" {
 		manager.respond(request, nil, errors.New("invalid file request"))
@@ -171,6 +222,14 @@ func (manager *fileManager) handle(payload []byte) {
 	switch request.Type {
 	case "file.list":
 		manager.list(request)
+	case "file.roots":
+		manager.roots(request)
+	case "file.stat":
+		manager.stat(request)
+	case "file.read":
+		manager.read(request)
+	case "file.write":
+		manager.write(request)
 	case "file.mkdir":
 		manager.mkdir(request)
 	case "file.create":
@@ -200,6 +259,12 @@ func (manager *fileManager) handle(payload []byte) {
 			defer manager.endDownload()
 			manager.download(request)
 		}()
+	case "file.download.begin":
+		manager.beginDownloadHandle(request)
+	case "file.download.read":
+		manager.readDownloadHandle(request)
+	case "file.download.close":
+		manager.closeDownloadHandle(request)
 	default:
 		manager.respond(request, nil, errors.New("unsupported file operation"))
 	}
@@ -302,7 +367,7 @@ func (manager *fileManager) list(request fileRequest) {
 		return strings.ToLower(result[left].Name) < strings.ToLower(result[right].Name)
 	})
 	total := len(result)
-	offset := request.Offset
+	offset := fileRequestOffset(request)
 	if offset < 0 {
 		offset = 0
 	}
@@ -371,9 +436,181 @@ func fitFileListEntries(path, parent string, offset, total int, entries []fileEn
 func (manager *fileManager) mkdir(request fileRequest) {
 	path, err := normalizeFilePath(request.Path)
 	if err == nil {
-		err = os.Mkdir(path, 0o755)
+		if request.Recursive {
+			err = os.MkdirAll(path, 0o755)
+		} else {
+			err = os.Mkdir(path, 0o755)
+		}
 	}
 	manager.respond(request, nil, err)
+}
+
+func (manager *fileManager) roots(request fileRequest) {
+	manager.respond(request, map[string]any{
+		"home":      userHomeDirectory(),
+		"roots":     filesystemRoots(),
+		"separator": pathSeparator(),
+	}, nil)
+}
+
+func (manager *fileManager) stat(request fileRequest) {
+	path, err := normalizeFilePath(request.Path)
+	if err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	manager.respond(request, fileEntry{
+		Name:       info.Name(),
+		Path:       path,
+		Size:       info.Size(),
+		Mode:       info.Mode().String(),
+		ModifiedAt: info.ModTime().UTC().Format(time.RFC3339),
+		Directory:  info.IsDir(),
+		Symlink:    info.Mode()&os.ModeSymlink != 0,
+		Hidden:     strings.HasPrefix(info.Name(), "."),
+	}, nil)
+}
+
+func (manager *fileManager) read(request fileRequest) {
+	path, err := normalizeFilePath(request.Path)
+	if err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	if info.IsDir() {
+		manager.respond(request, nil, errors.New("path is a directory"))
+		return
+	}
+	offset := int64(fileRequestOffset(request))
+	if offset < 0 {
+		offset = 0
+	}
+	maxBytes := request.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = 64 << 10
+	}
+	if maxBytes > 256<<10 {
+		maxBytes = 256 << 10
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	buf := make([]byte, maxBytes)
+	n, err := io.ReadFull(file, buf)
+	if err == io.EOF || err == io.ErrUnexpectedEOF {
+		err = nil
+		buf = buf[:n]
+	} else if err != nil {
+		manager.respond(request, nil, err)
+		return
+	} else {
+		buf = buf[:n]
+	}
+	encoding := strings.ToLower(strings.TrimSpace(request.Encoding))
+	payload := map[string]any{
+		"path":     path,
+		"offset":   offset,
+		"bytes":    len(buf),
+		"size":     info.Size(),
+		"next":     offset + int64(len(buf)),
+		"eof":      offset+int64(len(buf)) >= info.Size(),
+		"encoding": encoding,
+	}
+	if encoding == "base64" || !isMostlyText(buf) {
+		payload["encoding"] = "base64"
+		payload["content"] = base64.StdEncoding.EncodeToString(buf)
+	} else {
+		payload["encoding"] = "utf-8"
+		payload["content"] = string(buf)
+	}
+	manager.respond(request, payload, nil)
+}
+
+func (manager *fileManager) write(request fileRequest) {
+	path, err := normalizeFilePath(request.Path)
+	if err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	content := []byte(request.Content)
+	if strings.EqualFold(strings.TrimSpace(request.Encoding), "base64") {
+		content, err = base64.StdEncoding.DecodeString(request.Content)
+		if err != nil {
+			manager.respond(request, nil, err)
+			return
+		}
+	}
+	if int64(len(content)) > 256<<10 {
+		manager.respond(request, nil, errors.New("file is too large for a single write"))
+		return
+	}
+	if err := manager.operationContext().Err(); err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	if !request.Overwrite {
+		if _, err := os.Lstat(path); err == nil {
+			manager.respond(request, nil, errors.New("file already exists"))
+			return
+		}
+	}
+	tmp, err := os.CreateTemp(dir, ".lite-write-*")
+	if err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err = tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		manager.respond(request, nil, err)
+		return
+	}
+	if err = tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		manager.respond(request, nil, err)
+		return
+	}
+	if err = os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		manager.respond(request, nil, err)
+		return
+	}
+	manager.respond(request, map[string]any{"path": path, "bytes": len(content)}, nil)
+}
+
+func isMostlyText(buf []byte) bool {
+	if len(buf) == 0 {
+		return true
+	}
+	for _, b := range buf {
+		if b == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (manager *fileManager) create(request fileRequest) {
@@ -420,12 +657,19 @@ func (manager *fileManager) copy(request fileRequest) {
 	}
 	destination, err := normalizeFilePath(request.Destination)
 	if err == nil {
-		err = copyPath(source, destination)
+		err = copyPathCtx(manager.operationContext(), source, destination)
 	}
 	manager.respond(request, nil, err)
 }
 
 func copyPath(source, destination string) error {
+	return copyPathCtx(context.Background(), source, destination)
+}
+
+func copyPathCtx(ctx context.Context, source, destination string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if isFilesystemRoot(source) || isFilesystemRoot(destination) {
 		return errors.New("filesystem roots cannot be copied")
 	}
@@ -466,12 +710,12 @@ func copyPath(source, destination string) error {
 		if err := validateCopyDirectory(source); err != nil {
 			return err
 		}
-		return copyDirectory(source, destination)
+		return copyDirectory(ctx, source, destination)
 	}
 	if !sourceInfo.Mode().IsRegular() {
 		return errors.New("only regular files and directories can be copied")
 	}
-	return copyRegularFile(source, destination, sourceInfo.Mode().Perm())
+	return copyRegularFile(ctx, source, destination, sourceInfo.Mode().Perm())
 }
 
 func pathHasSymlink(path string) (bool, error) {
@@ -523,7 +767,7 @@ func validateCopyDirectory(source string) error {
 	})
 }
 
-func copyDirectory(source, destination string) (err error) {
+func copyDirectory(ctx context.Context, source, destination string) (err error) {
 	sourceInfo, err := os.Stat(source)
 	if err != nil {
 		return err
@@ -538,6 +782,9 @@ func copyDirectory(source, destination string) (err error) {
 		}
 	}()
 	err = filepath.WalkDir(source, func(current string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -556,7 +803,7 @@ func copyDirectory(source, destination string) (err error) {
 		if entry.IsDir() {
 			return os.Mkdir(target, info.Mode().Perm())
 		}
-		return copyRegularFile(current, target, info.Mode().Perm())
+		return copyRegularFile(ctx, current, target, info.Mode().Perm())
 	})
 	if err != nil {
 		return err
@@ -565,7 +812,7 @@ func copyDirectory(source, destination string) (err error) {
 	return nil
 }
 
-func copyRegularFile(source, destination string, mode fs.FileMode) (err error) {
+func copyRegularFile(ctx context.Context, source, destination string, mode fs.FileMode) (err error) {
 	input, err := os.Open(source)
 	if err != nil {
 		return err
@@ -582,7 +829,7 @@ func copyRegularFile(source, destination string, mode fs.FileMode) (err error) {
 			err = errors.Join(err, os.Remove(destination))
 		}
 	}()
-	if _, err = io.Copy(output, input); err != nil {
+	if _, err = copyWithContext(ctx, output, input); err != nil {
 		return err
 	}
 	if err = output.Sync(); err != nil {
@@ -590,6 +837,30 @@ func copyRegularFile(source, destination string, mode fs.FileMode) (err error) {
 	}
 	complete = true
 	return nil
+}
+
+func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
+	buf := make([]byte, 32*1024)
+	var written int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return written, err
+		}
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			w, writeErr := dst.Write(buf[:n])
+			written += int64(w)
+			if writeErr != nil {
+				return written, writeErr
+			}
+		}
+		if readErr == io.EOF {
+			return written, nil
+		}
+		if readErr != nil {
+			return written, readErr
+		}
+	}
 }
 
 func (manager *fileManager) remove(request fileRequest) {
@@ -605,6 +876,10 @@ func (manager *fileManager) remove(request fileRequest) {
 		}
 	}
 	if err == nil {
+		if err := manager.operationContext().Err(); err != nil {
+			manager.respond(request, nil, err)
+			return
+		}
 		if request.Recursive {
 			err = os.RemoveAll(path)
 		} else {
@@ -620,6 +895,123 @@ func newTransferID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buffer), nil
+}
+
+func (manager *fileManager) beginDownloadHandle(request fileRequest) {
+	path, err := normalizeFilePath(request.Path)
+	var info os.FileInfo
+	if err == nil {
+		info, err = os.Lstat(path)
+	}
+	if err == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
+		err = errors.New("only regular files can be downloaded")
+	}
+	if err == nil && info.Size() > maxFileTransferSize {
+		err = fmt.Errorf("file exceeds the %d byte transfer limit", maxFileTransferSize)
+	}
+	var file *os.File
+	if err == nil {
+		file, err = os.Open(path)
+	}
+	if err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	downloadID := strings.TrimSpace(request.DownloadID)
+	if downloadID == "" {
+		downloadID, err = newTransferID()
+		if err != nil {
+			_ = file.Close()
+			manager.respond(request, nil, err)
+			return
+		}
+	}
+	manager.mu.Lock()
+	if manager.closed {
+		manager.mu.Unlock()
+		_ = file.Close()
+		manager.respond(request, nil, errors.New("file manager is closed"))
+		return
+	}
+	if len(manager.downloads) >= maxConcurrentDownloads {
+		manager.mu.Unlock()
+		_ = file.Close()
+		manager.respond(request, nil, errors.New("too many concurrent downloads"))
+		return
+	}
+	if existing := manager.downloads[downloadID]; existing != nil {
+		_ = existing.file.Close()
+	}
+	manager.downloads[downloadID] = &downloadHandle{file: file, path: path, size: info.Size()}
+	manager.mu.Unlock()
+	manager.respond(request, map[string]any{
+		"download_id": downloadID,
+		"path":        path,
+		"size":        info.Size(),
+	}, nil)
+}
+
+func (manager *fileManager) readDownloadHandle(request fileRequest) {
+	manager.mu.Lock()
+	handle := manager.downloads[strings.TrimSpace(request.DownloadID)]
+	manager.mu.Unlock()
+	if handle == nil || handle.file == nil {
+		manager.respond(request, nil, errors.New("download session not found"))
+		return
+	}
+	offset := int64(fileRequestOffset(request))
+	if offset < 0 {
+		offset = 0
+	}
+	maxBytes := request.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = 64 << 10
+	}
+	if maxBytes > 256<<10 {
+		maxBytes = 256 << 10
+	}
+	if _, err := handle.file.Seek(offset, io.SeekStart); err != nil {
+		manager.respond(request, nil, err)
+		return
+	}
+	buf := make([]byte, maxBytes)
+	n, err := io.ReadFull(handle.file, buf)
+	if err == io.EOF || err == io.ErrUnexpectedEOF {
+		err = nil
+		buf = buf[:n]
+	} else if err != nil {
+		manager.respond(request, nil, err)
+		return
+	} else {
+		buf = buf[:n]
+	}
+	manager.respond(request, map[string]any{
+		"download_id": request.DownloadID,
+		"path":        handle.path,
+		"offset":      offset,
+		"bytes":       len(buf),
+		"size":        handle.size,
+		"next":        offset + int64(len(buf)),
+		"eof":         offset+int64(len(buf)) >= handle.size,
+		"encoding":    "base64",
+		"content":     base64.StdEncoding.EncodeToString(buf),
+	}, nil)
+}
+
+func (manager *fileManager) closeDownloadHandle(request fileRequest) {
+	downloadID := strings.TrimSpace(request.DownloadID)
+	manager.mu.Lock()
+	handle := manager.downloads[downloadID]
+	delete(manager.downloads, downloadID)
+	manager.mu.Unlock()
+	if handle == nil {
+		manager.respond(request, nil, errors.New("download session not found"))
+		return
+	}
+	if handle.file != nil {
+		_ = handle.file.Close()
+	}
+	manager.respond(request, map[string]any{"download_id": downloadID, "closed": true}, nil)
 }
 
 func (manager *fileManager) tryBeginDownload() bool {
@@ -731,6 +1123,9 @@ func (manager *fileManager) uploadChunk(request fileRequest) {
 		err = errors.New("upload chunk is too large")
 	}
 	upload.mu.Lock()
+	if err == nil && request.Offset != nil && int64(*request.Offset) != upload.received {
+		err = errors.New("upload chunk offset mismatch")
+	}
 	if err == nil && upload.received+int64(len(data)) > upload.expected {
 		err = errors.New("upload exceeds declared size")
 	}
