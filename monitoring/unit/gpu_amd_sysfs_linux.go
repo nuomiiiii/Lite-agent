@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+var amdSysfsDRMDir = "/sys/class/drm"
+
 func getAMDSysfsDetailedInfo() ([]DetailedGPUInfo, error) {
 	cards, err := listAMDSysfsCards()
 	if err != nil {
@@ -75,7 +77,7 @@ type amdSysfsCard struct {
 }
 
 func listAMDSysfsCards() ([]amdSysfsCard, error) {
-	matches, err := filepath.Glob("/sys/class/drm/card*")
+	matches, err := filepath.Glob(filepath.Join(amdSysfsDRMDir, "card*"))
 	if err != nil {
 		return nil, err
 	}
