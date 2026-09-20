@@ -21,8 +21,9 @@ var (
 				dialer := dnsresolver.GetNetDialer(15 * time.Second)
 				return dialer.DialContext(ctx, "tcp4", addr) // 锁v4防止出现问题
 			},
-			MaxIdleConns:          10,
-			IdleConnTimeout:       30 * time.Second,
+			DisableKeepAlives:     true,
+			MaxIdleConns:          1,
+			IdleConnTimeout:       5 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 		},
@@ -35,8 +36,9 @@ var (
 				dialer := dnsresolver.GetNetDialer(15 * time.Second)
 				return dialer.DialContext(ctx, "tcp6", addr) // 锁v6防止出现问题
 			},
-			MaxIdleConns:          10,
-			IdleConnTimeout:       30 * time.Second,
+			DisableKeepAlives:     true,
+			MaxIdleConns:          1,
+			IdleConnTimeout:       5 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 		},
@@ -120,41 +122,96 @@ func GetIPv6Address() (string, error) {
 	return "", nil
 }
 
-func GetIPAddress() (ipv4, ipv6 string, err error) {
+type publicIPPair struct {
+	v4 string
+	v6 string
+}
 
+var (
+	publicIPCache ttlCache[publicIPPair]
+	nicIPCache    ttlCache[publicIPPair]
+)
+
+func GetIPAddress() (ipv4, ipv6 string, err error) {
 	if flags.GetIpAddrFromNic {
-		allowNics, err := InterfaceList()
-		if err != nil {
-			log.Printf("Get Interface List Error: %v", err)
-		} else {
-			ipv4, ipv6 = getIPFromInterfaces(allowNics)
-			if ipv4 != "" || ipv6 != "" {
-				log.Printf("Get IP from NIC - IPv4: %s, IPv6: %s", ipv4, ipv6)
-				return ipv4, ipv6, nil
-			}
+		pair := nicIPCache.get(nicIPCacheTTL, lookupNICIP)
+		if pair.v4 != "" || pair.v6 != "" {
+			return pair.v4, pair.v6, nil
 		}
 	}
 
 	if flags.CustomIpv4 != "" {
 		ipv4 = flags.CustomIpv4
-	} else {
-		ipv4, err = GetIPv4Address()
-		if err != nil {
-			log.Printf("Get IPV4 Error: %v", err)
-			ipv4 = ""
-		}
 	}
 	if flags.CustomIpv6 != "" {
 		ipv6 = flags.CustomIpv6
-	} else {
-		ipv6, err = GetIPv6Address()
-		if err != nil {
-			log.Printf("Get IPV6 Error: %v", err)
-			ipv6 = ""
-		}
+	}
+	if ipv4 != "" && ipv6 != "" {
+		return ipv4, ipv6, nil
 	}
 
+	cached := lookupPublicIPCached()
+	if ipv4 == "" {
+		ipv4 = cached.v4
+	}
+	if ipv6 == "" {
+		ipv6 = cached.v6
+	}
 	return ipv4, ipv6, nil
+}
+
+func lookupNICIP() publicIPPair {
+	allowNics, err := InterfaceList()
+	if err != nil {
+		log.Printf("Get Interface List Error: %v", err)
+		return publicIPPair{}
+	}
+	v4, v6 := getIPFromInterfaces(allowNics)
+	if v4 != "" || v6 != "" {
+		log.Printf("Get IP from NIC - IPv4: %s, IPv6: %s", v4, v6)
+	}
+	return publicIPPair{v4: v4, v6: v6}
+}
+
+func lookupPublicIPCached() publicIPPair {
+	publicIPCache.mu.Lock()
+	if publicIPCache.ok && time.Since(publicIPCache.at) < publicIPCacheTTL && (publicIPCache.val.v4 != "" || publicIPCache.val.v6 != "") {
+		pair := publicIPCache.val
+		publicIPCache.mu.Unlock()
+		return pair
+	}
+	publicIPCache.mu.Unlock()
+
+	pair := lookupPublicIP()
+	if pair.v4 == "" && pair.v6 == "" {
+		return pair
+	}
+	publicIPCache.mu.Lock()
+	publicIPCache.val = pair
+	publicIPCache.at = time.Now()
+	publicIPCache.ok = true
+	publicIPCache.mu.Unlock()
+	return pair
+}
+
+func lookupPublicIP() publicIPPair {
+	var pair publicIPPair
+	var err error
+	if flags.CustomIpv4 == "" {
+		pair.v4, err = GetIPv4Address()
+		if err != nil {
+			log.Printf("Get IPV4 Error: %v", err)
+			pair.v4 = ""
+		}
+	}
+	if flags.CustomIpv6 == "" {
+		pair.v6, err = GetIPv6Address()
+		if err != nil {
+			log.Printf("Get IPV6 Error: %v", err)
+			pair.v6 = ""
+		}
+	}
+	return pair
 }
 
 // getIPFromInterfaces 从指定的网卡接口获取 IPv4 和 IPv6 地址

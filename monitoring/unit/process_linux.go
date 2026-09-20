@@ -8,8 +8,7 @@ import (
 	"strconv"
 )
 
-// ProcessCount returns the number of running processes
-func ProcessCount() (count int) {
+func currentProcessCount() int {
 	return processCountLinux()
 }
 

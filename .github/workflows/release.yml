@@ -59,7 +59,7 @@ jobs:
             # macOS binaries typically do not have a file extension
             true
           fi
-          go build -trimpath -ldflags="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${INTERNAL_VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}" -o "$BINARY_NAME"
+          go build -trimpath -ldflags="-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${INTERNAL_VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}" -o "$BINARY_NAME"
 
       - name: Upload binary to release
         env:

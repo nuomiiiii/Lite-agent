@@ -20,6 +20,8 @@ type CpuInfo struct {
 	CPUUsage         float64 `json:"cpu_usage"`
 }
 
+var cpuStaticCache ttlCache[CpuInfo]
+
 func Cpu() CpuInfo {
 	cpuinfo := CpuStaticInfo()
 
@@ -32,6 +34,10 @@ func Cpu() CpuInfo {
 }
 
 func CpuStaticInfo() CpuInfo {
+	return cpuStaticCache.get(0, readCPUStaticInfo)
+}
+
+func readCPUStaticInfo() CpuInfo {
 	cpuinfo := CpuInfo{
 		CPUName:          "Unknown",
 		CPUArchitecture:  runtime.GOARCH,

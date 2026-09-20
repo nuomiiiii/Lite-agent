@@ -8,8 +8,7 @@ import (
 	"strings"
 )
 
-// ProcessCount returns the number of running processes on Darwin (macOS)
-func ProcessCount() (count int) {
+func currentProcessCount() int {
 	return processCountDarwin()
 }
 

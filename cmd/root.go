@@ -40,6 +40,7 @@ var RootCmd = &cobra.Command{
 		if err := loadEffectiveConfig(cmd, flags); err != nil {
 			return err
 		}
+		configureRuntimeMemory()
 		if flags.ProtocolVersion == 0 {
 			flags.ProtocolVersion = 2
 		}

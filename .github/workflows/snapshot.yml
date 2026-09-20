@@ -102,7 +102,7 @@ jobs:
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME=${BINARY_NAME}.exe
           fi
-          go build -trimpath -ldflags="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}" -o $BINARY_NAME
+          go build -trimpath -ldflags="-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}" -o $BINARY_NAME
 
       - name: Upload binary as artifact
         uses: actions/upload-artifact@v4
@@ -208,7 +208,7 @@ jobs:
           CGO_ENABLED: 0
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          LDFLAGS="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}"
+          LDFLAGS="-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}"
 
           echo "Building for linux/amd64..."
           GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o Lite-agent-linux-amd64

@@ -61,8 +61,8 @@ func uploadBasicInfo() error {
 func buildBasicInfoMap() map[string]interface{} {
 	cpu := monitoring.CpuStaticInfo()
 
-	osname := monitoring.OSName()
-	kernelVersion := monitoring.KernelVersion()
+	osname := monitoring.CachedOSName()
+	kernelVersion := monitoring.CachedKernelVersion()
 	ipv4, ipv6, _ := monitoring.GetIPAddress()
 
 	return map[string]interface{}{
@@ -77,8 +77,8 @@ func buildBasicInfoMap() map[string]interface{} {
 		"mem_total":              monitoring.Ram().Total,
 		"swap_total":             monitoring.Swap().Total,
 		"disk_total":             monitoring.Disk().Total,
-		"gpu_name":               monitoring.GpuName(),
-		"virtualization":         monitoring.Virtualized(),
+		"gpu_name":               monitoring.CachedGpuName(),
+		"virtualization":         monitoring.CachedVirtualized(),
 		"version":                update.CurrentVersion,
 		"remote_protocol":        2,
 		"remote_control_enabled": pkg_flags.RemoteControlEnabled(),

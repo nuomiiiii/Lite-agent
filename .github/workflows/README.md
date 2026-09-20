@@ -33,7 +33,7 @@ Dockerfile:
 The agent version and update repository are embedded with:
 
 ```sh
--ldflags="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION}+${GITHUB_SHA::7} -X github.com/nuomiiiii/lite-agent/update.Repo=${GITHUB_REPOSITORY}"
+-ldflags="-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION}+${GITHUB_SHA::7} -X github.com/nuomiiiii/lite-agent/update.Repo=${GITHUB_REPOSITORY}"
 ```
 
 Do not remove this without changing the agent update and reporting logic. Stable

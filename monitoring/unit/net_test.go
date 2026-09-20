@@ -26,6 +26,46 @@ func TestConnectionsCount(t *testing.T) {
 	t.Logf("TCP connections: %d, UDP connections: %d", tcpCount, udpCount)
 }
 
+func TestPlatformConnectionsCountWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("iphelper connection count is windows-only")
+	}
+
+	tcp, udp, err := platformConnectionsCount()
+	if err != nil {
+		t.Fatalf("platformConnectionsCount: %v", err)
+	}
+	if tcp < 0 || udp < 0 {
+		t.Fatalf("negative counts tcp=%d udp=%d", tcp, udp)
+	}
+
+	gtcp, gudp, err := gopsutilConnectionsCount()
+	if err != nil {
+		t.Fatalf("gopsutilConnectionsCount: %v", err)
+	}
+	if connectionCountDeltaTooLarge(tcp, gtcp) {
+		t.Fatalf("tcp iphelper=%d gopsutil=%d", tcp, gtcp)
+	}
+	if connectionCountDeltaTooLarge(udp, gudp) {
+		t.Fatalf("udp iphelper=%d gopsutil=%d", udp, gudp)
+	}
+}
+
+func connectionCountDeltaTooLarge(got, want int) bool {
+	delta := got - want
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta <= 64 {
+		return false
+	}
+	limit := want / 3
+	if limit < 64 {
+		limit = 64
+	}
+	return delta > limit
+}
+
 func TestConnectionsCountCombinesProcAndFallbackErrors(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("proc net fast path only runs on linux")

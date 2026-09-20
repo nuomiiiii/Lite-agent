@@ -46,7 +46,7 @@ foreach ($goos in $osList) {
         $env:GOARCH = $goarch
         $env:CGO_ENABLED = '0'
 
-        & go build -trimpath -ldflags "-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=$version -X github.com/nuomiiiii/lite-agent/update.Repo=nuomiiiii/Lite-agent" -o "$outPath"
+        & go build -trimpath -ldflags "-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=$version -X github.com/nuomiiiii/lite-agent/update.Repo=nuomiiiii/Lite-agent" -o "$outPath"
         if ($LASTEXITCODE -ne 0) {
             Write-Host "Failed to build for $goos/$goarch" -ForegroundColor $Red
             $failedBuilds += "$goos/$goarch"

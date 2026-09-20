@@ -8,10 +8,8 @@ import (
 	"unsafe"
 )
 
-// ProcessCount returns the number of running processes
-func ProcessCount() (count int) {
+func currentProcessCount() int {
 	return processCountWindows()
-
 }
 
 // processCountWindows counts processes using Windows API

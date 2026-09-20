@@ -17,11 +17,15 @@ import (
 )
 
 func ConnectionsCount() (tcpCount, udpCount int, err error) {
+	return connectionsCountNow()
+}
+
+func connectionsCountNow() (tcpCount, udpCount int, err error) {
 	if runtime.GOOS == "linux" {
 		return connectionsCountWithProcFallback(procRoot(), gopsutilConnectionsCount)
 	}
 
-	return gopsutilConnectionsCount()
+	return platformConnectionsCount()
 }
 
 func connectionsCountWithProcFallback(root string, fallback func() (int, int, error)) (tcpCount, udpCount int, err error) {

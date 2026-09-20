@@ -38,7 +38,7 @@ for GOOS in "${OS_LIST[@]}"; do
     fi
 
     # 构建二进制文件
-    env GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=0 go build -trimpath -ldflags="-X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=nuomiiiii/Lite-agent" -o "./build/$BINARY_NAME"
+    env GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=nuomiiiii/Lite-agent" -o "./build/$BINARY_NAME"
 
     if [ $? -ne 0 ]; then
       echo -e "${RED}Failed to build for $GOOS/$GOARCH${NC}"
