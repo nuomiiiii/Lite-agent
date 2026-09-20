@@ -25,15 +25,15 @@ bash <(curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/inst
 
 ### 从 komari-agent 迁移
 
-机器上如果已经在跑上游 `komari-agent`，不要用 Lite 后台新节点的部署命令（那会换新 Token）。在原机器上执行迁移脚本：它会读出现有面板地址、节点 Token 和启动参数，装成 Lite-agent，确认新服务起来后再卸掉 `komari-agent`。
+机器上如果已经在跑上游 `komari-agent`，不要用 Lite 后台新节点的部署命令（那会换新 Token）。在原机器上执行迁移脚本：它会自行完成夺舍，装成 Lite-agent，确认新服务起来后再卸掉 `komari-agent`。
 
-主控已经换成 Lite、访问地址没变，并且 Lite 里还是原来的节点 Token 时：
+主控地址没变：
 
 ```bash
 curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.sh | sudo bash
 ```
 
-Lite 换了新地址、节点 Token 仍用原来的：
+主控换了新地址：
 
 ```bash
 curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.sh | sudo bash -s -- \
