@@ -5,13 +5,15 @@ import "sync/atomic"
 const DefaultReportInterval = 3.0
 
 type State struct {
-	MonthRotate        int
-	Interval           float64
-	IncludeNics        string
-	ExcludeNics        string
-	IncludeMountpoints string
-	MemoryIncludeCache bool
-	EnableGPU          bool
+	MonthRotate           int
+	MonthRotateTime       string
+	MonthRotateTimezone   string
+	Interval              float64
+	IncludeNics           string
+	ExcludeNics           string
+	IncludeMountpoints    string
+	MemoryIncludeCache    bool
+	EnableGPU             bool
 }
 
 var (
@@ -59,6 +61,14 @@ func Changes() <-chan struct{} {
 
 func MonthRotateDay() int {
 	return Snapshot().MonthRotate
+}
+
+func MonthRotateTime() string {
+	return Snapshot().MonthRotateTime
+}
+
+func MonthRotateTimezone() string {
+	return Snapshot().MonthRotateTimezone
 }
 
 func SetMonthRotateDay(day int) {

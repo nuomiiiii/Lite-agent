@@ -28,6 +28,17 @@ func TestApplyRuntimeConfigRejectsInvalidDay(t *testing.T) {
 	}
 }
 
+func TestApplyRuntimeConfigRejectsInvalidResetClock(t *testing.T) {
+	badTime := "99:00:00"
+	if _, err := applyRuntimeConfig(v2.ConfigParams{MonthRotateTime: &badTime}); err == nil {
+		t.Fatal("applyRuntimeConfig() expected invalid month_rotate_time")
+	}
+	badZone := "Not/AZone"
+	if _, err := applyRuntimeConfig(v2.ConfigParams{MonthRotateTimezone: &badZone}); err == nil {
+		t.Fatal("applyRuntimeConfig() expected invalid month_rotate_timezone")
+	}
+}
+
 func TestApplyRuntimeConfigUpdatesSafeFieldsOnly(t *testing.T) {
 	previous := runtimeconfig.Snapshot()
 	t.Cleanup(func() { runtimeconfig.Initialize(previous) })
@@ -64,8 +75,10 @@ func TestCurrentRuntimeConfigParamsReportsEveryRuntimeField(t *testing.T) {
 	previous := runtimeconfig.Snapshot()
 	t.Cleanup(func() { runtimeconfig.Initialize(previous) })
 	runtimeconfig.Initialize(runtimeconfig.State{
-		MonthRotate:        9,
-		Interval:           18,
+		MonthRotate:         9,
+		MonthRotateTime:     "12:38:12",
+		MonthRotateTimezone: "UTC",
+		Interval:            18,
 		IncludeNics:        "eth0",
 		ExcludeNics:        "lo",
 		IncludeMountpoints: "/;/data",
@@ -75,6 +88,8 @@ func TestCurrentRuntimeConfigParamsReportsEveryRuntimeField(t *testing.T) {
 
 	got := currentRuntimeConfigParams()
 	if got.MonthRotate == nil || *got.MonthRotate != 9 ||
+		got.MonthRotateTime == nil || *got.MonthRotateTime != "12:38:12" ||
+		got.MonthRotateTimezone == nil || *got.MonthRotateTimezone != "UTC" ||
 		got.Interval == nil || *got.Interval != 18 ||
 		got.IncludeNics == nil || *got.IncludeNics != "eth0" ||
 		got.ExcludeNics == nil || *got.ExcludeNics != "lo" ||

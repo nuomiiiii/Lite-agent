@@ -69,9 +69,11 @@ type EventResult struct {
 }
 
 type ConfigParams struct {
-	Revision           uint64   `json:"revision,omitempty"`
-	MonthRotate        *int     `json:"month_rotate,omitempty"`
-	Interval           *float64 `json:"interval,omitempty"`
+	Revision            uint64   `json:"revision,omitempty"`
+	MonthRotate         *int     `json:"month_rotate,omitempty"`
+	MonthRotateTime     *string  `json:"month_rotate_time,omitempty"`
+	MonthRotateTimezone *string  `json:"month_rotate_timezone,omitempty"`
+	Interval            *float64 `json:"interval,omitempty"`
 	IncludeNics        *string  `json:"include_nics,omitempty"`
 	ExcludeNics        *string  `json:"exclude_nics,omitempty"`
 	IncludeMountpoints *string  `json:"include_mountpoints,omitempty"`

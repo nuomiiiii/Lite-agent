@@ -230,7 +230,12 @@ func NetworkSpeed() (totalUp, totalDown, upSpeed, downSpeed uint64, err error) {
 	if resetDay != 0 {
 		netstatic.StartOrContinue() // 确保netstatic在运行
 		now := uint64(time.Now().Unix())
-		resetTimestamp := uint64(utils.GetLastResetDate(resetDay, time.Now()).Unix())
+		resetTimestamp := uint64(utils.GetLastResetInstant(
+			resetDay,
+			runtimeconfig.MonthRotateTime(),
+			runtimeconfig.MonthRotateTimezone(),
+			time.Now(),
+		).Unix())
 		nicStatics, err := netstatic.GetTotalTrafficBetween(resetTimestamp, now)
 		if err != nil {
 			// 如果netstatic失败，回退到原来的方法，并返回额外的错误信息

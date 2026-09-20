@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/nuomiiiii/lite-agent/dnsresolver"
 	"github.com/nuomiiiii/lite-agent/monitoring/netstatic"
@@ -24,6 +25,7 @@ import (
 	"github.com/nuomiiiii/lite-agent/server"
 	"github.com/nuomiiiii/lite-agent/tasklog"
 	"github.com/nuomiiiii/lite-agent/update"
+	"github.com/nuomiiiii/lite-agent/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -62,8 +64,10 @@ var RootCmd = &cobra.Command{
 			server.SetTaskLog(taskLog)
 		}
 		runtimeconfig.Initialize(runtimeconfig.State{
-			MonthRotate:        flags.MonthRotate,
-			Interval:           flags.Interval,
+			MonthRotate:         flags.MonthRotate,
+			MonthRotateTime:     flags.MonthRotateTime,
+			MonthRotateTimezone: flags.MonthRotateTimezone,
+			Interval:            flags.Interval,
 			IncludeNics:        flags.IncludeNics,
 			ExcludeNics:        flags.ExcludeNics,
 			IncludeMountpoints: flags.IncludeMountpoints,
@@ -321,6 +325,16 @@ func validateRuntimeConfig(config *pkg_flags.Config) error {
 	if config.MonthRotate < 0 || config.MonthRotate > 31 {
 		return fmt.Errorf("invalid month rotate day %d: expected 0 or a day from 1 to 31", config.MonthRotate)
 	}
+	if strings.TrimSpace(config.MonthRotateTime) != "" {
+		if _, _, _, err := utils.ParseResetClock(config.MonthRotateTime); err != nil {
+			return fmt.Errorf("invalid month rotate time %q", config.MonthRotateTime)
+		}
+	}
+	if strings.TrimSpace(config.MonthRotateTimezone) != "" {
+		if _, err := time.LoadLocation(config.MonthRotateTimezone); err != nil {
+			return fmt.Errorf("invalid month rotate timezone %q", config.MonthRotateTimezone)
+		}
+	}
 	if config.ProtocolVersion != 0 && config.ProtocolVersion != 2 {
 		return fmt.Errorf("invalid protocol version %d: Lite agent only supports protocol 2", config.ProtocolVersion)
 	}
@@ -377,6 +391,8 @@ func init() {
 	RootCmd.PersistentFlags().StringVar(&flags.ExcludeNics, "exclude-nics", "", "Comma-separated list of network interfaces to exclude")
 	RootCmd.PersistentFlags().StringVar(&flags.IncludeMountpoints, "include-mountpoint", "", "Semicolon-separated list of mount points to include for disk statistics")
 	RootCmd.PersistentFlags().IntVar(&flags.MonthRotate, "month-rotate", 0, "Month reset for network statistics (0 to disable)")
+	RootCmd.PersistentFlags().StringVar(&flags.MonthRotateTime, "month-rotate-time", "", "Traffic reset time of day (HH:MM:SS); empty is 00:00:00")
+	RootCmd.PersistentFlags().StringVar(&flags.MonthRotateTimezone, "month-rotate-timezone", "", "IANA timezone for traffic reset; empty is Asia/Shanghai")
 	RootCmd.PersistentFlags().StringVar(&flags.CFAccessClientID, "cf-access-client-id", "", "Cloudflare Access service-token Client ID")
 	RootCmd.PersistentFlags().StringVar(&flags.CFAccessClientSecret, "cf-access-client-secret", "", "Cloudflare Access service-token Client Secret")
 	RootCmd.PersistentFlags().BoolVar(&flags.MemoryIncludeCache, "memory-include-cache", false, "Include cache/buffer in memory usage")

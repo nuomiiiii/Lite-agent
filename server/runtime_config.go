@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/nuomiiiii/lite-agent/monitoring/netstatic"
 	monitoring "github.com/nuomiiiii/lite-agent/monitoring/unit"
 	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
 	"github.com/nuomiiiii/lite-agent/runtimeconfig"
+	"github.com/nuomiiiii/lite-agent/utils"
 )
 
 type runtimeConfigEnvelope struct {
@@ -31,7 +33,9 @@ func processBasicInfoResponse(body []byte) error {
 	if envelope.Config == nil {
 		if envelope.RequestConfigState {
 			return tryUploadData(map[string]interface{}{
-				"month_rotate": runtimeconfig.MonthRotateDay(),
+				"month_rotate":          runtimeconfig.MonthRotateDay(),
+				"month_rotate_time":     runtimeconfig.MonthRotateTime(),
+				"month_rotate_timezone": runtimeconfig.MonthRotateTimezone(),
 			})
 		}
 		return nil
@@ -43,20 +47,23 @@ func processBasicInfoResponse(body []byte) error {
 func currentRuntimeConfigParams() v2.ConfigParams {
 	state := runtimeconfig.Snapshot()
 	return v2.ConfigParams{
-		Revision:           appliedRuntimeConfigRevision(),
-		MonthRotate:        &state.MonthRotate,
-		Interval:           &state.Interval,
-		IncludeNics:        &state.IncludeNics,
-		ExcludeNics:        &state.ExcludeNics,
-		IncludeMountpoints: &state.IncludeMountpoints,
-		MemoryIncludeCache: &state.MemoryIncludeCache,
-		EnableGPU:          &state.EnableGPU,
+		Revision:            appliedRuntimeConfigRevision(),
+		MonthRotate:         &state.MonthRotate,
+		MonthRotateTime:     &state.MonthRotateTime,
+		MonthRotateTimezone: &state.MonthRotateTimezone,
+		Interval:            &state.Interval,
+		IncludeNics:         &state.IncludeNics,
+		ExcludeNics:         &state.ExcludeNics,
+		IncludeMountpoints:  &state.IncludeMountpoints,
+		MemoryIncludeCache:  &state.MemoryIncludeCache,
+		EnableGPU:           &state.EnableGPU,
 	}
 }
 
 func applyRuntimeConfig(config v2.ConfigParams) (bool, error) {
 	current := runtimeconfig.Snapshot()
 	next := current
+	var err error
 
 	if config.MonthRotate != nil {
 		if *config.MonthRotate < 0 || *config.MonthRotate > 31 {
@@ -64,13 +71,34 @@ func applyRuntimeConfig(config v2.ConfigParams) (bool, error) {
 		}
 		next.MonthRotate = *config.MonthRotate
 	}
+	if config.MonthRotateTime != nil {
+		next.MonthRotateTime, err = validateRuntimeText("month_rotate_time", *config.MonthRotateTime, 16)
+		if err != nil {
+			return false, err
+		}
+		if next.MonthRotateTime != "" {
+			if _, _, _, err = utils.ParseResetClock(next.MonthRotateTime); err != nil {
+				return false, fmt.Errorf("month_rotate_time must be HH:MM or HH:MM:SS")
+			}
+		}
+	}
+	if config.MonthRotateTimezone != nil {
+		next.MonthRotateTimezone, err = validateRuntimeText("month_rotate_timezone", *config.MonthRotateTimezone, 64)
+		if err != nil {
+			return false, err
+		}
+		if next.MonthRotateTimezone != "" {
+			if _, err = time.LoadLocation(next.MonthRotateTimezone); err != nil {
+				return false, fmt.Errorf("unknown month_rotate_timezone %q", next.MonthRotateTimezone)
+			}
+		}
+	}
 	if config.Interval != nil {
 		if *config.Interval < 1 || *config.Interval > 3600 {
 			return false, fmt.Errorf("interval must be between 1 and 3600 seconds")
 		}
 		next.Interval = *config.Interval
 	}
-	var err error
 	if config.IncludeNics != nil {
 		next.IncludeNics, err = validateRuntimeText("include_nics", *config.IncludeNics, 1024)
 		if err != nil {
@@ -100,6 +128,8 @@ func applyRuntimeConfig(config v2.ConfigParams) (bool, error) {
 	}
 
 	networkConfigChanged := next.MonthRotate != current.MonthRotate ||
+		next.MonthRotateTime != current.MonthRotateTime ||
+		next.MonthRotateTimezone != current.MonthRotateTimezone ||
 		next.IncludeNics != current.IncludeNics || next.ExcludeNics != current.ExcludeNics
 	if networkConfigChanged {
 		if next.MonthRotate == 0 {
@@ -121,7 +151,7 @@ func applyRuntimeConfig(config v2.ConfigParams) (bool, error) {
 	}
 
 	runtimeconfig.Set(next)
-	log.Printf("Applied Lite runtime config: interval=%gs month_rotate=%d", next.Interval, next.MonthRotate)
+	log.Printf("Applied Lite runtime config: interval=%gs month_rotate=%d time=%s tz=%s", next.Interval, next.MonthRotate, next.MonthRotateTime, next.MonthRotateTimezone)
 	return true, nil
 }
 
