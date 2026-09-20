@@ -30,13 +30,13 @@ bash <(curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/inst
 主控已经换成 Lite、访问地址没变，并且 Lite 里还是原来的节点 Token 时：
 
 ```bash
-sudo bash <(curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.sh)
+curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.sh | sudo bash
 ```
 
 Lite 换了新地址、节点 Token 仍用原来的：
 
 ```bash
-sudo bash <(curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.sh) \
+curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.sh | sudo bash -s -- \
   --endpoint "https://lite.example.com"
 ```
 

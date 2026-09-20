@@ -390,13 +390,35 @@ echo ""
 # Function to uninstall the previous installation
 uninstall_named_service() {
     local name="$1"
-    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q "${name}.service"; then
-        log_info "Stopping and disabling existing systemd service ${name}..."
-        systemctl stop ${name}.service
-        systemctl disable ${name}.service
-        rm -f "/etc/systemd/system/${name}.service"
-        systemctl daemon-reload
-    elif command -v rc-service >/dev/null 2>&1 && [ -f "/etc/init.d/${name}" ]; then
+    local unit_file="/etc/systemd/system/${name}.service"
+    local drop_in="/etc/systemd/system/${name}.service.d"
+    local wants_link="/etc/systemd/system/multi-user.target.wants/${name}.service"
+    local has_unit=false
+    local cleaned=false
+    if command -v systemctl >/dev/null 2>&1; then
+        if [ -f "$unit_file" ] || [ -L "$unit_file" ]; then
+            has_unit=true
+        fi
+        if systemctl is-active --quiet "${name}.service" 2>/dev/null; then
+            systemctl stop "${name}.service" >/dev/null 2>&1 || true
+        fi
+        if [ "$has_unit" = true ]; then
+            log_info "Stopping and disabling existing systemd service ${name}..."
+            systemctl stop "${name}.service" >/dev/null 2>&1 || true
+            systemctl disable "${name}.service" >/dev/null 2>&1 || true
+        fi
+        if [ "$has_unit" = true ] || [ -e "$wants_link" ] || [ -d "$drop_in" ]; then
+            rm -f "$wants_link"
+            rm -f "$unit_file"
+            rm -rf "$drop_in"
+            systemctl daemon-reload >/dev/null 2>&1 || true
+            cleaned=true
+        fi
+    fi
+    if [ "$has_unit" = true ] || [ "$cleaned" = true ]; then
+        return
+    fi
+    if command -v rc-service >/dev/null 2>&1 && [ -f "/etc/init.d/${name}" ]; then
         log_info "Stopping and disabling existing OpenRC service ${name}..."
         rc-service ${name} stop
         rc-update del ${name} default
