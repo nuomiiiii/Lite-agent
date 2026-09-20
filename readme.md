@@ -23,6 +23,33 @@ bash <(curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/inst
 
 安装脚本支持 Linux、macOS 和 FreeBSD，并可通过 `--install-dir`、`--install-service-name`、`--install-ghproxy`、`--install-version` 调整安装过程。需要开启远程控制时，把 `--enable-remote-control=false` 换成 `--enable-remote-control`。
 
+### 从 komari-agent 迁移
+
+机器上如果已经在跑上游 `komari-agent`，不要用 Lite 后台新节点的部署命令（那会换新 Token）。在原机器上执行迁移脚本：它会读出现有面板地址、节点 Token 和启动参数，装成 Lite-agent，确认新服务起来后再卸掉 `komari-agent`。
+
+主控已经换成 Lite、访问地址没变，并且 Lite 里还是原来的节点 Token 时：
+
+```bash
+sudo bash <(curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.sh)
+```
+
+Lite 换了新地址、节点 Token 仍用原来的：
+
+```bash
+sudo bash <(curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.sh) \
+  --endpoint "https://lite.example.com"
+```
+
+Windows：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.ps1 -UseBasicParsing -OutFile 'migrate.ps1'; & .\migrate.ps1"
+```
+
+新地址同样追加 `--endpoint "https://lite.example.com"`。GitHub 访问困难时可加 `--install-ghproxy`。不要给迁移脚本传 `--token`，也不要改安装目录或服务名，否则不会按原节点接手，也不会卸掉上游 Agent。
+
+Docker 请用原来的 `-e` `-t` 重建 Lite-agent 容器，不要在容器里跑迁移脚本。
+
 ### Docker
 
 ```bash

@@ -35,6 +35,34 @@ log_config() {
     echo -e "${CYAN}[CONFIG]${NC} $1"
 }
 
+redact_agent_args() {
+    local args="$1"
+    local out="" prev="" token
+    # shellcheck disable=SC2086
+    for token in $args; do
+        if [ "$prev" = "-t" ] || [ "$prev" = "--token" ] || [ "$prev" = "--cf-access-client-secret" ]; then
+            out="$out ***"
+            prev="$token"
+            continue
+        fi
+        case "$token" in
+            --token=*)
+                out="$out --token=***"
+                prev=""
+                continue
+                ;;
+            --cf-access-client-secret=*)
+                out="$out --cf-access-client-secret=***"
+                prev=""
+                continue
+                ;;
+        esac
+        out="$out $token"
+        prev="$token"
+    done
+    echo "${out# }"
+}
+
 # Default values
 service_name="lite-agent"
 target_dir="/opt/lite-agent"
@@ -351,7 +379,7 @@ log_config "  Service name: ${GREEN}$service_name${NC}"
 log_config "  Install directory: ${GREEN}$target_dir${NC}"
 log_config "  GitHub proxy: ${GREEN}${github_proxy:-"(direct)"}${NC}"
 log_config "  Binary: ${GREEN}$agent_path${NC}"
-log_config "  Binary arguments: ${GREEN}$agent_args${NC}"
+log_config "  Binary arguments: ${GREEN}$(redact_agent_args "$agent_args")${NC}"
 if [ -n "$install_version" ]; then
     log_config "  Specified agent version: ${GREEN}$install_version${NC}"
 else
@@ -987,5 +1015,5 @@ else
 fi
 log_config "Service: ${GREEN}$service_name${NC}"
 log_config "Process: ${GREEN}$agent_path${NC}"
-log_config "Arguments: ${GREEN}$agent_args${NC}"
+log_config "Arguments: ${GREEN}$(redact_agent_args "$agent_args")${NC}"
 echo -e "${WHITE}===========================================${NC}"

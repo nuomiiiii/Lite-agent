@@ -8,6 +8,34 @@ function Log-Error { param([string]$Message) Write-Host "[ERROR] $Message"    -F
 function Log-Step { param([string]$Message) Write-Host "$Message"    -ForegroundColor Magenta }
 function Log-Config { param([string]$Message) Write-Host "- $Message"    -ForegroundColor White }
 
+function Redact-AgentArgs {
+    param([string[]]$ArgList)
+    $out = New-Object System.Collections.Generic.List[string]
+    $hideNext = $false
+    foreach ($item in @($ArgList)) {
+        if ($hideNext) {
+            $out.Add("***") | Out-Null
+            $hideNext = $false
+            continue
+        }
+        if ($item -eq "-t" -or $item -eq "--token" -or $item -eq "--cf-access-client-secret") {
+            $out.Add($item) | Out-Null
+            $hideNext = $true
+            continue
+        }
+        if ($item -like "--token=*") {
+            $out.Add("--token=***") | Out-Null
+            continue
+        }
+        if ($item -like "--cf-access-client-secret=*") {
+            $out.Add("--cf-access-client-secret=***") | Out-Null
+            continue
+        }
+        $out.Add($item) | Out-Null
+    }
+    return ($out -join " ")
+}
+
 # Default parameters
 $InstallDir = Join-Path $Env:ProgramFiles "Lite"
 $ServiceName = "lite-agent"
@@ -170,7 +198,7 @@ Log-Config "Service name: $ServiceName"
 Log-Config "Install directory: $InstallDir"
 Log-Config "Process: $(Join-Path $InstallDir 'Lite-agent.exe')"
 Log-Config "GitHub proxy: $ProxyDisplay"
-Log-Config "Agent arguments: $($AgentArgs -join ' ')"
+Log-Config "Agent arguments: $(Redact-AgentArgs $AgentArgs)"
 if ($InstallVersion -ne "") {
     Log-Config "Specified agent version: $InstallVersion"
 } else {
@@ -456,4 +484,4 @@ Log-Success "Service $ServiceName installed and started using nssm."
 Log-Success "Lite-agent installation completed!"
 Log-Config "Service name: $ServiceName"
 Log-Config "Process: $AgentPath"
-Log-Config "Arguments: $argString"
+Log-Config "Arguments: $(Redact-AgentArgs $AgentArgs)"
