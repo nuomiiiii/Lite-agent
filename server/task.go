@@ -2,11 +2,9 @@ package server
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -18,7 +16,6 @@ import (
 	"time"
 
 	pkg_flags "github.com/nuomiiiii/lite-agent/cmd/flags"
-	"github.com/nuomiiiii/lite-agent/dnsresolver"
 	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
 	"github.com/nuomiiiii/lite-agent/tasklog"
 	"github.com/nuomiiiii/lite-agent/ws"
@@ -640,46 +637,12 @@ func postV2RPC(payload interface{}) error {
 	if err != nil {
 		return err
 	}
-	endpoint := strings.TrimSuffix(flags.Endpoint, "/") + "/api/clients/v2/rpc"
-	compressed := false
-	if !flags.DisableCompression {
-		if gz, err := gzipBytes(body); err == nil {
-			body = gz
-			compressed = true
-		}
-	}
-	req, err := http.NewRequest("POST", endpoint, bytes.NewReader(body))
+	status, respBody, err := postV2JSONRPC(context.Background(), body, 30*time.Second)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	authorizeAgentRequest(req, flags.Token)
-	if compressed {
-		req.Header.Set("Content-Encoding", "gzip")
+	if status != http.StatusOK {
+		return &httpStatusError{StatusCode: status, Status: http.StatusText(status), Body: string(respBody)}
 	}
-	client := dnsresolver.GetHTTPClientWithPreference(30*time.Second, flags.PreferIPVersion)
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return &httpStatusError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(body)}
-	}
-	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
-}
-
-func gzipBytes(data []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	if _, err := zw.Write(data); err != nil {
-		_ = zw.Close()
-		return nil, err
-	}
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }

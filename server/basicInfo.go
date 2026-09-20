@@ -2,16 +2,13 @@ package server
 
 import (
 	"bytes"
-	"io"
+	"context"
 	"log"
 	"net/http"
 	"runtime"
-	"strings"
 	"time"
 
-	"github.com/nuomiiiii/lite-agent/dnsresolver"
 	monitoring "github.com/nuomiiiii/lite-agent/monitoring/unit"
-	"github.com/nuomiiiii/lite-agent/protocol/transport"
 	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
 	"github.com/nuomiiiii/lite-agent/update"
 
@@ -95,44 +92,15 @@ func tryUploadData(data map[string]interface{}) error {
 }
 
 func tryUploadDataV2(data map[string]interface{}) error {
-	endpoint := strings.TrimSuffix(flags.Endpoint, "/") + "/api/clients/v2/rpc"
 	sentConfigResult := snapshotPendingConfigResult()
 	payload := v2.BuildBasicInfoPayload(data, currentRuntimeConfigParams(), sentConfigResult, runtime.GOOS)
-	body := payload
-	compressed := false
-	if !flags.DisableCompression {
-		if gz, err := transport.GzipBytes(payload); err == nil {
-			body = gz
-			compressed = true
-		}
-	}
-
-	req, err := http.NewRequest("POST", endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	authorizeAgentRequest(req, flags.Token)
-	if compressed {
-		req.Header.Set("Content-Encoding", "gzip")
-	}
-
-	client := dnsresolver.GetHTTPClientWithPreference(30*time.Second, flags.PreferIPVersion)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
+	status, respBody, err := postV2JSONRPC(context.Background(), payload, 30*time.Second)
 	if err != nil {
 		return err
 	}
 	message := string(respBody)
-
-	if resp.StatusCode != http.StatusOK {
-		return &httpStatusError{StatusCode: resp.StatusCode, Status: resp.Status, Body: message}
+	if status != http.StatusOK {
+		return &httpStatusError{StatusCode: status, Status: http.StatusText(status), Body: message}
 	}
 	if len(bytes.TrimSpace(respBody)) > 0 {
 		if err := processBasicInfoResponse(respBody); err != nil {

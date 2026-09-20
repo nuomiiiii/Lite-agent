@@ -2,7 +2,7 @@
 
 Lite 的跨平台节点监控 Agent。本仓库版本在基础监控之外，支持安全远程终端、文件管理、远程命令、Cloudflare Access、在线配置下发与配置结果回执。
 
-当前稳定版本：`2.3.3.1`
+当前稳定版本：`2.3.3.2`
 
 使用 MCP 代理功能，Lite需升级至 2.3.3 或更高版本。现有上报、远程终端和文件管理可继续在 Lite 2.3.2 使用。
 
@@ -59,7 +59,7 @@ docker pull ghcr.io/nuomiiiii/Lite-agent:latest
 也可以拉取固定版本：
 
 ```bash
-docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.3.1
+docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.3.2
 ```
 
 容器的启动参数、宿主机目录挂载和节点 Token 请以 Lite 后台生成的部署命令为准。Docker 部署不会在容器内替换 Agent 二进制；升级时需拉取新镜像并重建容器。
@@ -239,5 +239,6 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 | `2.3.1.1` | 已下线自动发现功能，不再注册新节点。原先自动发现带上来的机器，升级后仍能正常上报，若遇到离线，请重新安装 Agent。 |
 | `2.3.3.0` | 新增 MCP 代理功能：远程控制开启后，AI客户端可通过 MCP 代理远程执行命令和操作文件。文件管理增加读写和分块下载。网页里原来的列表、上传、下载用法不变。现有上报、远程终端和文件管理可继续在 Lite 2.3.2 使用。使用 MCP 代理功能，Lite需升级至 2.3.3 或更高版本。 |
 | `2.3.3.1` | Linux 上部分 AMD 显卡在 rocm-smi 无法使用时，改为读取系统接口上报 GPU 占用、显存和温度。 |
+| `2.3.3.2` | 新增从上游 komari-agent 迁到 Lite-agent 的迁移脚本；个别线路拦压缩基础上报时自动 HTTP 压缩回退。 |
 
 完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-agent/releases)。
