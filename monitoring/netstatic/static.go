@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/nuomiiiii/lite-agent/utils"
 	gnet "github.com/shirou/gopsutil/v4/net"
 )
 
@@ -66,7 +68,30 @@ var (
 
 	// 上次采集到的累计字节数（用于计算 delta）
 	lastCounters = map[string]struct{ Tx, Rx uint64 }{}
+
+	resetClock atomic.Value // resetClockState
 )
+
+type resetClockState struct {
+	Day      int
+	Clock    string
+	Timezone string
+}
+
+// SetResetClock records the monthly reset instant used when flushing samples.
+// Day 0 disables split-on-boundary.
+func SetResetClock(day int, clock, timezone string) {
+	resetClock.Store(resetClockState{Day: day, Clock: clock, Timezone: timezone})
+}
+
+func currentResetClock() resetClockState {
+	value := resetClock.Load()
+	if value == nil {
+		return resetClockState{}
+	}
+	state, _ := value.(resetClockState)
+	return state
+}
 
 func nowUnix() uint64 { return uint64(time.Now().Unix()) }
 
@@ -231,18 +256,79 @@ func flushCacheLocked(ts uint64) {
 	if len(staticCache) == 0 {
 		return
 	}
+	boundary := resetBoundaryUnix(ts)
 	for name, arr := range staticCache {
-		var sumTx, sumRx uint64
-		for _, td := range arr {
-			sumTx += td.Tx
-			sumRx += td.Rx
-		}
-		if sumTx > 0 || sumRx > 0 {
-			store.Interfaces[name] = append(store.Interfaces[name], TrafficData{Timestamp: ts, Tx: sumTx, Rx: sumRx})
+		for _, rec := range aggregateByReset(arr, ts, boundary) {
+			store.Interfaces[name] = append(store.Interfaces[name], rec)
 		}
 	}
 	// 清空缓存
 	staticCache = make(map[string][]TrafficData)
+}
+
+func resetBoundaryUnix(flushTs uint64) uint64 {
+	clock := currentResetClock()
+	if clock.Day < 1 || clock.Day > 31 || flushTs == 0 {
+		return 0
+	}
+	instant := utils.GetLastResetInstant(clock.Day, clock.Clock, clock.Timezone, time.Unix(int64(flushTs), 0).UTC())
+	if instant.IsZero() {
+		return 0
+	}
+	unix := instant.Unix()
+	if unix <= 0 {
+		return 0
+	}
+	return uint64(unix)
+}
+
+func aggregateByReset(arr []TrafficData, flushTs, boundary uint64) []TrafficData {
+	if len(arr) == 0 {
+		return nil
+	}
+	if boundary == 0 {
+		return sumTraffic(arr, flushTs)
+	}
+	var before, after TrafficData
+	for _, td := range arr {
+		if td.Timestamp < boundary {
+			before.Tx += td.Tx
+			before.Rx += td.Rx
+		} else {
+			after.Tx += td.Tx
+			after.Rx += td.Rx
+		}
+	}
+	var out []TrafficData
+	if before.Tx > 0 || before.Rx > 0 {
+		ts := flushTs
+		if ts >= boundary {
+			ts = boundary - 1
+		}
+		before.Timestamp = ts
+		out = append(out, before)
+	}
+	if after.Tx > 0 || after.Rx > 0 {
+		ts := flushTs
+		if ts < boundary {
+			ts = boundary
+		}
+		after.Timestamp = ts
+		out = append(out, after)
+	}
+	return out
+}
+
+func sumTraffic(arr []TrafficData, ts uint64) []TrafficData {
+	var sumTx, sumRx uint64
+	for _, td := range arr {
+		sumTx += td.Tx
+		sumRx += td.Rx
+	}
+	if sumTx == 0 && sumRx == 0 {
+		return nil
+	}
+	return []TrafficData{{Timestamp: ts, Tx: sumTx, Rx: sumRx}}
 }
 
 // startGoroutinesLocked 启动采集和保存的 goroutines（调用前必须已持有锁）

@@ -228,6 +228,7 @@ func NetworkSpeed() (totalUp, totalDown, upSpeed, downSpeed uint64, err error) {
 	// 如果设置了月重置（非0），统计totalUp、totalDown
 	resetDay := runtimeconfig.MonthRotateDay()
 	if resetDay != 0 {
+		netstatic.SetResetClock(resetDay, runtimeconfig.MonthRotateTime(), runtimeconfig.MonthRotateTimezone())
 		netstatic.StartOrContinue() // 确保netstatic在运行
 		now := uint64(time.Now().Unix())
 		resetTimestamp := uint64(utils.GetLastResetInstant(

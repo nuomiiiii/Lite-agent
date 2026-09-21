@@ -132,6 +132,7 @@ func applyRuntimeConfig(config v2.ConfigParams) (bool, error) {
 		next.MonthRotateTimezone != current.MonthRotateTimezone ||
 		next.IncludeNics != current.IncludeNics || next.ExcludeNics != current.ExcludeNics
 	if networkConfigChanged {
+		netstatic.SetResetClock(next.MonthRotate, next.MonthRotateTime, next.MonthRotateTimezone)
 		if next.MonthRotate == 0 {
 			if err := netstatic.Stop(); err != nil {
 				return false, fmt.Errorf("stop network statistics: %w", err)

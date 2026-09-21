@@ -2,7 +2,7 @@
 
 Lite 的跨平台节点监控 Agent。本仓库版本在基础监控之外，支持安全远程终端、文件管理、远程命令、Cloudflare Access、在线配置下发与配置结果回执。
 
-当前稳定版本：`2.3.3.4`
+当前稳定版本：`2.3.3.5`
 
 使用 MCP 代理功能，Lite需升级至 2.3.3 或更高版本。现有上报、远程终端和文件管理可继续在 Lite 2.3.2 使用。
 
@@ -59,7 +59,7 @@ docker pull ghcr.io/nuomiiiii/Lite-agent:latest
 也可以拉取固定版本：
 
 ```bash
-docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.3.4
+docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.3.5
 ```
 
 容器的启动参数、宿主机目录挂载和节点 Token 请以 Lite 后台生成的部署命令为准。Docker 部署不会在容器内替换 Agent 二进制；升级时需拉取新镜像并重建容器。
@@ -242,5 +242,6 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 | `2.3.3.2` | 新增从上游 komari-agent 迁到 Lite-agent 的迁移脚本；个别线路拦压缩基础上报时自动 HTTP 压缩回退。 |
 | `2.3.3.3` | 含 2.3.3.2 的迁移脚本和 HTTP 压缩回退，并优化 Agent 运行时内存占用。 |
 | `2.3.3.4` | 流量重置改为按时区、日期、时分秒计算。已有节点升级后，原来只填了重置日的，会按北京时间当天 00:00:00 继续重置。 |
+| `2.3.3.5` | 优化流量统计跨过重置时刻统计逻辑，会按重置前后分开记录，重置前的流量不会算进新周期。 |
 
 完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-agent/releases)。
