@@ -53,15 +53,36 @@ case $os_type in
         ;;
 esac
 
+need_option_value() {
+    local flag="$1"
+    local value="${2:-}"
+    if [ -z "$value" ] || [ "${value#-}" != "$value" ]; then
+        log_error "$flag requires a value"
+        exit 1
+    fi
+}
+
 while [ $# -gt 0 ]; do
     case $1 in
         --install-ghproxy)
+            need_option_value "$1" "${2:-}"
             github_proxy="$2"
             shift 2
             ;;
+        --install-ghproxy=*)
+            github_proxy="${1#--install-ghproxy=}"
+            need_option_value "--install-ghproxy" "$github_proxy"
+            shift
+            ;;
         --install-version)
+            need_option_value "$1" "${2:-}"
             install_version="$2"
             shift 2
+            ;;
+        --install-version=*)
+            install_version="${1#--install-version=}"
+            need_option_value "--install-version" "$install_version"
+            shift
             ;;
         --install-dir|--install-service-name)
             log_error "Migration always uses the default Lite-agent directory and service name."
@@ -73,11 +94,13 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         -e|--endpoint)
+            need_option_value "$1" "${2:-}"
             endpoint_override="$2"
             shift 2
             ;;
         --endpoint=*)
             endpoint_override="${1#--endpoint=}"
+            need_option_value "--endpoint" "$endpoint_override"
             shift
             ;;
         -t|--token|--token=*)
@@ -329,6 +352,93 @@ read_env_assignment() {
     return 1
 }
 
+# Carry komari-agent Environment values that are not already on the command line.
+# komari-agent only has the reset day (AGENT_MONTH_ROTATE). Do not invent time/tz flags.
+adopt_env_key() {
+    local key="$1"
+    local value="$2"
+    [ -n "$value" ] || return 0
+    case "$key" in
+        AGENT_TOKEN)
+            has_named_flag token t || collected+=("-t" "$value")
+            ;;
+        AGENT_ENDPOINT)
+            has_named_flag endpoint e || collected+=("-e" "$value")
+            ;;
+        AGENT_MONTH_ROTATE)
+            has_named_flag month-rotate "" || collected+=("--month-rotate" "$value")
+            ;;
+        AGENT_INTERVAL)
+            has_named_flag interval "" || collected+=("--interval" "$value")
+            ;;
+        AGENT_INCLUDE_NICS)
+            has_named_flag include-nics "" || collected+=("--include-nics" "$value")
+            ;;
+        AGENT_EXCLUDE_NICS)
+            has_named_flag exclude-nics "" || collected+=("--exclude-nics" "$value")
+            ;;
+        AGENT_CONFIG_FILE)
+            has_named_flag config "" || collected+=("--config" "$value")
+            ;;
+    esac
+}
+
+adopt_env_blob() {
+    local blob="$1"
+    local key value
+    [ -n "$blob" ] || return 0
+    for key in AGENT_TOKEN AGENT_ENDPOINT AGENT_MONTH_ROTATE AGENT_INTERVAL AGENT_INCLUDE_NICS AGENT_EXCLUDE_NICS AGENT_CONFIG_FILE; do
+        if value=$(read_env_assignment "$blob" "$key"); then
+            adopt_env_key "$key" "$value"
+        fi
+    done
+}
+
+adopt_env_file() {
+    local file="$1"
+    local line key value
+    [ -f "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%%#*}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        case "$line" in
+            export\ *)
+                line="${line#export }"
+                ;;
+        esac
+        case "$line" in
+            AGENT_*=*)
+                key="${line%%=*}"
+                value="${line#*=}"
+                value="${value#\"}"
+                value="${value%\"}"
+                value="${value#\'}"
+                value="${value%\'}"
+                adopt_env_key "$key" "$value"
+                ;;
+        esac
+    done < "$file"
+}
+
+adopt_unit_file_environment() {
+    local file="$1"
+    local line path
+    [ -f "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            Environment=*)
+                adopt_env_blob "${line#Environment=}"
+                ;;
+            EnvironmentFile=*)
+                path="${line#EnvironmentFile=}"
+                path="${path#-}"
+                adopt_env_file "$path"
+                ;;
+        esac
+    done < "$file"
+}
+
 read_systemd_legacy() {
     command -v systemctl >/dev/null 2>&1 || return 1
     systemctl cat "${legacy_service_name}.service" >/dev/null 2>&1 || return 1
@@ -355,19 +465,9 @@ read_systemd_legacy() {
     wd=$(systemctl show "${legacy_service_name}.service" -p WorkingDirectory --value 2>/dev/null || true)
     add_source_dir "$wd"
     envblob=$(systemctl show "${legacy_service_name}.service" -p Environment --value 2>/dev/null || true)
-    if [ -n "$envblob" ]; then
-        local env_token env_endpoint
-        if env_token=$(read_env_assignment "$envblob" "AGENT_TOKEN"); then
-            if ! has_named_flag token t; then
-                collected+=("-t" "$env_token")
-            fi
-        fi
-        if env_endpoint=$(read_env_assignment "$envblob" "AGENT_ENDPOINT"); then
-            if ! has_named_flag endpoint e; then
-                collected+=("-e" "$env_endpoint")
-            fi
-        fi
-    fi
+    adopt_env_blob "$envblob"
+    fragment=$(systemctl show "${legacy_service_name}.service" -p FragmentPath --value 2>/dev/null || true)
+    adopt_unit_file_environment "$fragment"
     bindir=$(systemctl show "${legacy_service_name}.service" -p ExecStart --value 2>/dev/null | sed -n 's/.*path=\([^ ;]*\).*/\1/p' | head -n1)
     add_source_dir "$(dirname "$bindir")"
     return 0
@@ -474,6 +574,8 @@ if read_systemd_legacy; then
     legacy_found=true
 elif read_unit_file_args "/etc/init.d/${legacy_service_name}"; then
     legacy_found=true
+elif read_unit_file_args "/usr/local/etc/rc.d/${legacy_service_name}"; then
+    legacy_found=true
 elif read_unit_file_args "/etc/init/${legacy_service_name}.conf"; then
     legacy_found=true
 elif read_launchd_legacy; then
@@ -510,6 +612,21 @@ rewrite_config_path() {
     if [ -f "$dest" ]; then
         replace_or_add_flag config "" "$dest"
     fi
+}
+
+copy_sidecars_from() {
+    local src="$1"
+    if [ ! -d "$src" ] || [ "$src" = "$target_dir" ]; then
+        return
+    fi
+    mkdir -p "$target_dir"
+    local name
+    for name in auto-discovery.json net_static.json net_static.json.bak node.json remote-control.state config.json; do
+        if [ -f "$src/$name" ] && [ ! -f "$target_dir/$name" ]; then
+            log_info "Copying $name from $src to $target_dir"
+            cp -a "$src/$name" "$target_dir/$name"
+        fi
+    done
 }
 
 sidecar_token=""
@@ -557,20 +674,13 @@ fi
 drop_named_flag auto-discovery
 rewrite_config_path
 
-copy_sidecars_from() {
-    local src="$1"
-    if [ ! -d "$src" ] || [ "$src" = "$target_dir" ]; then
-        return
-    fi
-    mkdir -p "$target_dir"
-    local name
-    for name in auto-discovery.json net_static.json net_static.json.bak node.json remote-control.state; do
-        if [ -f "$src/$name" ] && [ ! -f "$target_dir/$name" ]; then
-            log_info "Copying $name from $src to $target_dir"
-            cp -a "$src/$name" "$target_dir/$name"
-        fi
-    done
-}
+log_step "Copying sidecar files from the detected komari-agent directories..."
+for dir in "${source_dirs[@]+"${source_dirs[@]}"}"; do
+    copy_sidecars_from "$dir"
+done
+if ! has_named_flag config "" && [ -f "$target_dir/config.json" ]; then
+    replace_or_add_flag config "" "$target_dir/config.json"
+fi
 
 echo -e "${WHITE}===========================================${NC}"
 echo -e "${WHITE}    Lite Agent Migration Script        ${NC}"
@@ -583,11 +693,6 @@ if [ -n "$sidecar_uuid" ]; then
 fi
 log_config "  Arguments: ${GREEN}$(redact_collected)${NC}"
 echo ""
-
-log_step "Copying sidecar files from the detected komari-agent directories..."
-for dir in "${source_dirs[@]+"${source_dirs[@]}"}"; do
-    copy_sidecars_from "$dir"
-done
 
 script_dir=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then

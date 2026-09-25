@@ -215,7 +215,7 @@ function Copy-SidecarsFrom {
     param([string]$SourceDir)
     if (-not (Test-Path $SourceDir) -or $SourceDir -eq $InstallDir) { return }
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    foreach ($name in @("auto-discovery.json", "net_static.json", "net_static.json.bak", "nssm.exe", "node.json", "remote-control.state")) {
+    foreach ($name in @("auto-discovery.json", "net_static.json", "net_static.json.bak", "nssm.exe", "node.json", "remote-control.state", "config.json")) {
         $src = Join-Path $SourceDir $name
         $dst = Join-Path $InstallDir $name
         if ((Test-Path $src) -and -not (Test-Path $dst)) {

@@ -457,7 +457,7 @@ copy_sidecars_from() {
     fi
     mkdir -p "$target_dir"
     local name
-    for name in auto-discovery.json net_static.json net_static.json.bak node.json remote-control.state; do
+    for name in auto-discovery.json net_static.json net_static.json.bak node.json remote-control.state config.json; do
         if [ -f "$src/$name" ] && [ ! -f "$target_dir/$name" ]; then
             log_info "Copying $name from $src to $target_dir"
             cp -a "$src/$name" "$target_dir/$name"

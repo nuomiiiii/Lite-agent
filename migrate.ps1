@@ -27,8 +27,36 @@ if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 
 for ($i = 0; $i -lt $args.Count; $i++) {
     switch ($args[$i]) {
-        "--install-ghproxy" { $GitHubProxy = $args[$i + 1]; $i++; continue }
-        "--install-version" { $InstallVersion = $args[$i + 1]; $i++; continue }
+        "--install-ghproxy" {
+            if (($i + 1) -ge $args.Count -or [string]::IsNullOrWhiteSpace($args[$i + 1]) -or $args[$i + 1].StartsWith("-")) {
+                Log-Error "--install-ghproxy requires a value"
+                exit 1
+            }
+            $GitHubProxy = $args[$i + 1]; $i++; continue
+        }
+        { $_ -like "--install-ghproxy=*" } {
+            $GitHubProxy = $_.Substring("--install-ghproxy=".Length)
+            if ([string]::IsNullOrWhiteSpace($GitHubProxy)) {
+                Log-Error "--install-ghproxy requires a value"
+                exit 1
+            }
+            continue
+        }
+        "--install-version" {
+            if (($i + 1) -ge $args.Count -or [string]::IsNullOrWhiteSpace($args[$i + 1]) -or $args[$i + 1].StartsWith("-")) {
+                Log-Error "--install-version requires a value"
+                exit 1
+            }
+            $InstallVersion = $args[$i + 1]; $i++; continue
+        }
+        { $_ -like "--install-version=*" } {
+            $InstallVersion = $_.Substring("--install-version=".Length)
+            if ([string]::IsNullOrWhiteSpace($InstallVersion)) {
+                Log-Error "--install-version requires a value"
+                exit 1
+            }
+            continue
+        }
         "--install-dir" {
             Log-Error "Migration always uses the default Lite-agent directory and service name."
             Log-Error "Run this script without --install-dir so komari-agent can be uninstalled afterward."
@@ -38,9 +66,28 @@ for ($i = 0; $i -lt $args.Count; $i++) {
             Log-Error "Migration always uses the default Lite-agent directory and service name."
             exit 1
         }
-        "-e" { $EndpointOverride = $args[$i + 1]; $i++; continue }
-        "--endpoint" { $EndpointOverride = $args[$i + 1]; $i++; continue }
-        { $_ -like "--endpoint=*" } { $EndpointOverride = $_.Substring("--endpoint=".Length); continue }
+        "-e" {
+            if (($i + 1) -ge $args.Count -or [string]::IsNullOrWhiteSpace($args[$i + 1]) -or $args[$i + 1].StartsWith("-")) {
+                Log-Error "-e requires a panel URL"
+                exit 1
+            }
+            $EndpointOverride = $args[$i + 1]; $i++; continue
+        }
+        "--endpoint" {
+            if (($i + 1) -ge $args.Count -or [string]::IsNullOrWhiteSpace($args[$i + 1]) -or $args[$i + 1].StartsWith("-")) {
+                Log-Error "--endpoint requires a panel URL"
+                exit 1
+            }
+            $EndpointOverride = $args[$i + 1]; $i++; continue
+        }
+        { $_ -like "--endpoint=*" } {
+            $EndpointOverride = $_.Substring("--endpoint=".Length)
+            if ([string]::IsNullOrWhiteSpace($EndpointOverride)) {
+                Log-Error "--endpoint requires a panel URL"
+                exit 1
+            }
+            continue
+        }
         "-t" {
             Log-Error "Do not pass a new token. This script keeps the existing komari-agent key."
             exit 1
@@ -212,6 +259,55 @@ function Find-Nssm {
     return ""
 }
 
+function Adopt-EnvKey {
+    param([string]$Key, [string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return }
+    switch ($Key) {
+        "AGENT_TOKEN" {
+            if (-not (Test-HasNamedFlag "token" "t")) {
+                $Collected.Add("-t") | Out-Null
+                $Collected.Add($Value) | Out-Null
+            }
+        }
+        "AGENT_ENDPOINT" {
+            if (-not (Test-HasNamedFlag "endpoint" "e")) {
+                $Collected.Add("-e") | Out-Null
+                $Collected.Add($Value) | Out-Null
+            }
+        }
+        "AGENT_MONTH_ROTATE" {
+            if (-not (Test-HasNamedFlag "month-rotate")) {
+                $Collected.Add("--month-rotate") | Out-Null
+                $Collected.Add($Value) | Out-Null
+            }
+        }
+        "AGENT_INTERVAL" {
+            if (-not (Test-HasNamedFlag "interval")) {
+                $Collected.Add("--interval") | Out-Null
+                $Collected.Add($Value) | Out-Null
+            }
+        }
+        "AGENT_INCLUDE_NICS" {
+            if (-not (Test-HasNamedFlag "include-nics")) {
+                $Collected.Add("--include-nics") | Out-Null
+                $Collected.Add($Value) | Out-Null
+            }
+        }
+        "AGENT_EXCLUDE_NICS" {
+            if (-not (Test-HasNamedFlag "exclude-nics")) {
+                $Collected.Add("--exclude-nics") | Out-Null
+                $Collected.Add($Value) | Out-Null
+            }
+        }
+        "AGENT_CONFIG_FILE" {
+            if (-not (Test-HasNamedFlag "config")) {
+                $Collected.Add("--config") | Out-Null
+                $Collected.Add($Value) | Out-Null
+            }
+        }
+    }
+}
+
 function Test-ServiceExists {
     param([string]$Name)
     $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
@@ -231,15 +327,13 @@ if (Test-ServiceExists $LegacyServiceName) {
         Add-SourceDir ($appDir.Trim())
         $appPath = & $nssmPath get $LegacyServiceName Application 2>$null | Out-String
         if ($appPath) { Add-SourceDir ([System.IO.Path]::GetDirectoryName($appPath.Trim())) }
-        $envExtra = & $nssmPath get $LegacyServiceName AppEnvironmentExtra 2>$null | Out-String
-        foreach ($line in @($envExtra -split '[\r\n]+')) {
-            if ($line -like "AGENT_TOKEN=*" -and -not (Test-HasNamedFlag "token" "t")) {
-                $Collected.Add("-t") | Out-Null
-                $Collected.Add($line.Substring("AGENT_TOKEN=".Length).Trim()) | Out-Null
-            }
-            if ($line -like "AGENT_ENDPOINT=*" -and -not (Test-HasNamedFlag "endpoint" "e")) {
-                $Collected.Add("-e") | Out-Null
-                $Collected.Add($line.Substring("AGENT_ENDPOINT=".Length).Trim()) | Out-Null
+        foreach ($envName in @("AppEnvironmentExtra", "AppEnvironment")) {
+            $envExtra = & $nssmPath get $LegacyServiceName $envName 2>$null | Out-String
+            foreach ($line in @(($envExtra -replace "`0", "`n") -split '[\r\n]+')) {
+                $line = $line.Trim()
+                if ($line -match '^(AGENT_[A-Z0-9_]+)=(.*)$') {
+                    Adopt-EnvKey -Key $matches[1] -Value $matches[2].Trim().Trim('"')
+                }
             }
         }
     }
@@ -313,19 +407,11 @@ if (Test-HasNamedFlag "config") {
     }
 }
 
-Write-Host "==========================================="
-Write-Host "    Lite Agent Migration Script"
-Write-Host "==========================================="
-Log-Config "Keeping the original node token and installing Lite-agent"
-Log-Config "Endpoint: $(Get-NamedFlagValue -Name endpoint -Short e)"
-if ($sidecarUuid) { Log-Config "Saved UUID: $sidecarUuid" }
-Log-Config "Arguments: $(Redact-AgentArgs @($Collected))"
-
 Log-Step "Copying sidecar files from the detected komari-agent directories..."
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 foreach ($dir in @($SourceDirs)) {
     if ($dir -eq $InstallDir) { continue }
-    foreach ($name in @("auto-discovery.json", "net_static.json", "net_static.json.bak", "nssm.exe", "node.json", "remote-control.state")) {
+    foreach ($name in @("auto-discovery.json", "net_static.json", "net_static.json.bak", "nssm.exe", "node.json", "remote-control.state", "config.json")) {
         $src = Join-Path $dir $name
         $dst = Join-Path $InstallDir $name
         if ((Test-Path $src) -and -not (Test-Path $dst)) {
@@ -334,6 +420,18 @@ foreach ($dir in @($SourceDirs)) {
         }
     }
 }
+
+if (-not (Test-HasNamedFlag "config") -and (Test-Path (Join-Path $InstallDir "config.json"))) {
+    Set-NamedFlag -Name "config" -Short "" -Value (Join-Path $InstallDir "config.json")
+}
+
+Write-Host "==========================================="
+Write-Host "    Lite Agent Migration Script"
+Write-Host "==========================================="
+Log-Config "Keeping the original node token and installing Lite-agent"
+Log-Config "Endpoint: $(Get-NamedFlagValue -Name endpoint -Short e)"
+if ($sidecarUuid) { Log-Config "Saved UUID: $sidecarUuid" }
+Log-Config "Arguments: $(Redact-AgentArgs @($Collected))"
 
 $installer = ""
 if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot "install.ps1"))) {
