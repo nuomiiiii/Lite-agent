@@ -99,8 +99,9 @@ if ! type _completion_loader >/dev/null 2>&1 && ! type __load_completion >/dev/n
   fi
 fi
 LITE_BASHRC
+# bash 先扫长选项，遇到 -i 就停。--rcfile 必须写在 -i 前面，否则会被当成非法短选项并退出。
 if [ -f "$rc" ]; then
-  exec "$1" -i --rcfile "$rc"
+  exec "$1" --rcfile "$rc" -i
 fi
 exec "$1" -i`
 

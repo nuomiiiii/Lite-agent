@@ -94,7 +94,7 @@ func TestMotdPreludeInteractiveFlag(t *testing.T) {
 	}
 
 	bashPrelude := motdShellPreludeFor("/bin/bash")
-	if !strings.Contains(bashPrelude, `exec "$1" -i --rcfile "$rc"`) || !strings.Contains(bashPrelude, "/usr/share/bash-completion/bash_completion") {
+	if !strings.Contains(bashPrelude, `exec "$1" --rcfile "$rc" -i`) || !strings.Contains(bashPrelude, "/usr/share/bash-completion/bash_completion") {
 		t.Fatalf("bash prelude = %q", bashPrelude)
 	}
 	if strings.Contains(bashPrelude, `||`) || strings.Contains(bashPrelude, `exec "$0"`) {
