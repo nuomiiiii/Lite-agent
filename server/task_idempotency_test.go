@@ -3,6 +3,8 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -181,7 +183,7 @@ func TestNewTaskConcurrentSameTaskIDStartsOnce(t *testing.T) {
 	t.Cleanup(func() { flags.RemoteControlEnabled = originalRemote })
 
 	marker := filepath.Join(t.TempDir(), "ran.txt")
-	command := "Add-Content -Path '" + marker + "' -Value ran"
+	command := onceMarkerCommand(marker)
 	var wg sync.WaitGroup
 	wg.Add(8)
 	for i := 0; i < 8; i++ {
@@ -211,6 +213,13 @@ func TestNewTaskConcurrentSameTaskIDStartsOnce(t *testing.T) {
 	if lines != 1 {
 		t.Fatalf("command executions = %d, want 1 (%q)", lines, data)
 	}
+}
+
+func onceMarkerCommand(path string) string {
+	if runtime.GOOS == "windows" {
+		return "Add-Content -Path '" + path + "' -Value ran"
+	}
+	return "printf '%s\n' ran >> '" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 }
 
 func TestRecoverInterruptedTasksBoundsWorkersAndAcks(t *testing.T) {
