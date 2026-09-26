@@ -13,14 +13,7 @@ import (
 )
 
 func newTerminalImpl() (*terminalImpl, error) {
-	// 查找 shell
-	shell, err := exec.LookPath("powershell.exe")
-	if err != nil || shell == "" {
-		shell = "cmd.exe"
-	}
-	if shell == "" {
-		return nil, fmt.Errorf("no supported shell found")
-	}
+	shell := windowsTerminalCommandLine(exec.LookPath)
 
 	// 远程 Shell 从当前账户主目录启动，与 SSH 等常规登录体验一致。
 	workingDir := terminalWorkingDirectory()
@@ -35,8 +28,6 @@ func newTerminalImpl() (*terminalImpl, error) {
 	tty.Resize(80, 24)
 
 	return &terminalImpl{
-		shell:      shell,
-		workingDir: workingDir,
 		term: &windowsTerminal{
 			tty: tty,
 		},

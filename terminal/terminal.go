@@ -6,8 +6,6 @@ import (
 	pkg_flags "github.com/nuomiiiii/lite-agent/cmd/flags"
 )
 
-var flags = pkg_flags.GlobalConfig
-
 // Terminal 接口定义平台特定的终端操作
 type Terminal interface {
 	Close() error
@@ -19,9 +17,7 @@ type Terminal interface {
 
 // terminalImpl 封装终端和平台特定逻辑
 type terminalImpl struct {
-	shell      string
-	workingDir string
-	term       Terminal
+	term Terminal
 }
 
 func remoteControlEnabled() bool {

@@ -510,6 +510,19 @@ wait_new_service() {
     return 1
 }
 
+legacy_install_detected() {
+    if managed_service_unit_exists "$legacy_service_name"; then
+        return 0
+    fi
+    local src
+    for src in "/opt/komari" "/usr/local/komari" "$HOME/.komari" "/c/komari"; do
+        if [ -d "$src" ] && [ "$src" != "$target_dir" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 retire_legacy_service() {
     if [ "$custom_layout" = true ]; then
         return
@@ -517,21 +530,26 @@ retire_legacy_service() {
     if [ "$service_name" = "$legacy_service_name" ]; then
         return
     fi
+    if ! managed_service_unit_exists "$legacy_service_name"; then
+        return
+    fi
     log_step "Retiring legacy service ${legacy_service_name} after Lite-agent is running..."
     prevent_service_restart "$legacy_service_name"
     uninstall_named_service "$legacy_service_name"
 }
 
-# Keep the old komari-agent process running until Lite-agent is up.
+# Keep an existing komari-agent process running until Lite-agent is up.
+# Nothing is printed when no komari-agent service or directory is present.
 # Custom --install-dir / --install-service-name installs do not migrate default paths.
 if [ "$custom_layout" != true ]; then
-    log_step "Copying sidecar files from the default komari-agent directory..."
     copy_sidecars_from "/opt/komari"
     copy_sidecars_from "/usr/local/komari"
     copy_sidecars_from "$HOME/.komari"
     copy_sidecars_from "/c/komari"
 else
-    log_step "Custom install layout; leaving komari-agent in place."
+    if legacy_install_detected; then
+        log_step "Custom install layout; leaving komari-agent in place."
+    fi
     uninstall_named_service "$service_name"
 fi
 preserve_existing_config_arg
@@ -1020,7 +1038,11 @@ fi
 
 if [ "$init_system" != "nixos" ]; then
     if ! wait_new_service; then
-        log_error "Lite-agent service ${service_name} did not become running; leaving komari-agent in place"
+        if managed_service_unit_exists "$legacy_service_name"; then
+            log_error "Lite-agent service ${service_name} did not become running; leaving komari-agent in place"
+        else
+            log_error "Lite-agent service ${service_name} did not become running"
+        fi
         exit 1
     fi
     retire_legacy_service

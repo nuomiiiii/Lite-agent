@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 	"time"
 
@@ -15,75 +14,50 @@ import (
 )
 
 // newTerminalImpl 创建一个新的终端实例。
-// 它会尝试根据用户配置文件查找默认 shell，如果失败则回退到常见 shell。
-// 优先以交互模式启动 shell，如果不支持则回退到非交互模式。
+// 从 /etc/passwd 查找默认 shell；sh、dash、ash 会改用已安装的 zsh 或 bash。
+// 支持 -i 的 shell 在打印 motd 后以交互模式启动。pty 失败时回退为无参数 shell。
 func newTerminalImpl() (*terminalImpl, error) {
-	shell := ""
-	// 从 /etc/passwd 获取用户默认 shell
-	userHomeDir, err := os.UserHomeDir() // 获取当前用户的主目录
+	passwdShell := ""
+	userHomeDir, err := os.UserHomeDir()
 	if err == nil {
-		passwdContent, err := os.ReadFile("/etc/passwd")
-		if err == nil {
-			for _, line := range strings.Split(string(passwdContent), "\n") {
-				if strings.Contains(line, userHomeDir) {
-					parts := strings.Split(line, ":")
-					if len(parts) >= 7 && parts[6] != "" {
-						shell = parts[6]
-						//log.Printf("Found shell from /etc/passwd: %s for user home: %s\n", shell, userHomeDir)
-						break
-					}
-				}
-			}
+		passwdContent, readErr := os.ReadFile("/etc/passwd")
+		if readErr == nil {
+			passwdShell = shellFromPasswd(string(passwdContent), userHomeDir)
 		} else {
-			log.Printf("Error reading /etc/passwd: %v\n", err)
+			log.Printf("Error reading /etc/passwd: %v\n", readErr)
 		}
 	} else {
 		log.Printf("Error getting user home directory: %v\n", err)
 	}
 
-	// 验证从 /etc/passwd 获取的 shell 是否可用
-	if shell != "" {
-		if _, err := exec.LookPath(shell); err != nil {
-			log.Printf("Shell '%s' from /etc/passwd not found in PATH, falling back.\n", shell)
-			shell = "" // 默认 shell 不可用，清空以进入回退逻辑
-		}
+	lookup := func(name string) bool {
+		_, lookErr := exec.LookPath(name)
+		return lookErr == nil
+	}
+	passwdAvailable := passwdShell != "" && lookup(passwdShell)
+	if passwdShell != "" && !passwdAvailable {
+		log.Printf("Shell '%s' from /etc/passwd not found in PATH, falling back.\n", passwdShell)
 	}
 
-	// 回退到默认 shell 列表
-	defaultShells := []string{"zsh", "bash", "sh"}
-	if shell == "" {
+	shell, err := selectTerminalShell(passwdShell, lookup)
+	if err != nil {
+		return nil, err
+	}
+	if !passwdAvailable {
 		log.Println("Shell not found or invalid, trying default shells.")
-		for _, s := range defaultShells {
-			if _, err := exec.LookPath(s); err == nil {
-				shell = s
-				log.Printf("Using default shell: %s\n", shell)
-				break
-			}
-		}
-	}
-
-	if shell == "" {
-		return nil, fmt.Errorf("no supported shell found among %v", defaultShells)
+		log.Printf("Using default shell: %s\n", shell)
+	} else if shell != passwdShell {
+		log.Printf("Using shell %s instead of %s\n", shell, passwdShell)
 	}
 
 	cmd := buildMotdShellCommand(shell)
-	cmd.Dir = terminalWorkingDirectory()
-	cmd.Env = append(os.Environ(), // 继承系统环境变量
-		"TERM=xterm-256color", // 设置终端类型，提高兼容性
-		"LANG=C.UTF-8",        // 设置语言环境为 UTF-8
-		"LC_ALL=C.UTF-8",      // 强制所有本地化变量为 UTF-8
-	)
+	prepareTerminalCommand(cmd)
 
 	tty, err := pty.Start(cmd)
 	if err != nil {
-		// 回退到原始启动逻辑（直接启动 shell，再无参数）
+		// pty 失败时直接启动 shell，不带 -i。
 		cmd = exec.Command(shell)
-		cmd.Dir = terminalWorkingDirectory()
-		cmd.Env = append(os.Environ(),
-			"TERM=xterm-256color",
-			"LANG=C.UTF-8",
-			"LC_ALL=C.UTF-8",
-		)
+		prepareTerminalCommand(cmd)
 		tty, err = pty.Start(cmd)
 		if err != nil {
 			return nil, fmt.Errorf("failed to start pty with argv0 prelude and plain shell: %v", err)
@@ -94,7 +68,6 @@ func newTerminalImpl() (*terminalImpl, error) {
 	pty.Setsize(tty, &pty.Winsize{Rows: 24, Cols: 80})
 
 	return &terminalImpl{
-		shell: shell,
 		term: &unixTerminal{
 			tty: tty,
 			cmd: cmd,
@@ -102,10 +75,13 @@ func newTerminalImpl() (*terminalImpl, error) {
 	}, nil
 }
 
-const motdShellPrelude = "for f in /etc/update-motd.d/*; do [ -e \"$f\" ] && [ -x \"$f\" ] && \"$f\"; done; [ -r /etc/motd ] && cat /etc/motd; exec \"$1\""
-
-func buildMotdShellCommand(shell string) *exec.Cmd {
-	return exec.Command("/bin/sh", "-c", motdShellPrelude, "lite-motd", shell)
+func prepareTerminalCommand(cmd *exec.Cmd) {
+	cmd.Dir = terminalWorkingDirectory()
+	cmd.Env = append(os.Environ(),
+		"TERM=xterm-256color",
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+	)
 }
 
 func terminalWorkingDirectory() string {

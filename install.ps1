@@ -228,18 +228,18 @@ function Copy-SidecarsFrom {
 function Remove-AgentService {
     param([string]$Name)
     if ([string]::IsNullOrWhiteSpace($Name)) { return }
-    Log-Step "Checking for existing service $Name..."
-    $serviceStatus = nssm status $Name 2>&1
-    if ($serviceStatus -notmatch "SERVICE_STOPPED" -and $serviceStatus -notmatch "does not exist") {
+    if (-not (Test-AgentServiceExists $Name)) { return }
+    $serviceStatus = & nssm status $Name 2>&1 | Out-String
+    if ($serviceStatus -notmatch "SERVICE_STOPPED") {
         Log-Info "Stopping service $Name..."
-        nssm stop $Name 2>&1 | Out-Null
+        & nssm stop $Name 2>&1 | Out-Null
     }
-    $removeOutput = nssm remove $Name confirm 2>&1
+    Log-Info "Removing service $Name..."
+    $removeOutput = & nssm remove $Name confirm 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0) {
         return
     }
-    if ($removeOutput -match "Can't open service! (The specified service does not exist as an installed service.)" -or $removeOutput -match "No such service" -or $removeOutput -match "does not exist") {
-        Log-Info "Service $Name does not exist or was already removed."
+    if ($removeOutput -match "Can't open service" -or $removeOutput -match "No such service" -or $removeOutput -match "does not exist") {
         return
     }
     $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
@@ -262,8 +262,17 @@ function Wait-AgentService {
 function Test-AgentServiceExists {
     param([string]$Name)
     if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
-    $status = nssm status $Name 2>&1 | Out-String
-    return $status -notmatch "does not exist"
+    $status = & nssm status $Name 2>&1 | Out-String
+    if ([string]::IsNullOrWhiteSpace($status)) { return $false }
+    if ($status -match "does not exist" -or $status -match "Can't open service" -or $status -match "OpenService\(\)") {
+        return $false
+    }
+    return $true
+}
+
+function Test-LegacyInstallPresent {
+    if (Test-AgentServiceExists $LegacyServiceName) { return $true }
+    return (Test-Path $LegacyDir)
 }
 
 function ConvertFrom-ArgString {
@@ -388,11 +397,12 @@ elseif (-not $CustomLayout -and (Test-AgentServiceExists $LegacyServiceName)) {
 $AgentArgs = @(Resolve-RemoteControlInstallArgs -Incoming $AgentArgs -ManagedExists $managedExists -ExistingArgs $existingArgs)
 
 if (-not $CustomLayout) {
-    Log-Step "Copying sidecar files from the default Komari directory..."
     Copy-SidecarsFrom -SourceDir $LegacyDir
 }
 else {
-    Log-Step "Custom install layout; leaving komari-agent in place."
+    if (Test-LegacyInstallPresent) {
+        Log-Step "Custom install layout; leaving komari-agent in place."
+    }
     Remove-AgentService -Name $ServiceName
 }
 $AgentArgs = @(Preserve-ExistingConfigArg -Incoming $AgentArgs -ExistingArgs $existingArgs)
@@ -471,12 +481,17 @@ nssm set $ServiceName AppRestartDelay 5000
 nssm set $ServiceName AppDirectory $InstallDir
 nssm start $ServiceName
 if (-not (Wait-AgentService -Name $ServiceName)) {
-    Log-Error "Lite-agent service $ServiceName did not become running; leaving komari-agent in place"
+    if (Test-AgentServiceExists $LegacyServiceName) {
+        Log-Error "Lite-agent service $ServiceName did not become running; leaving komari-agent in place"
+    }
+    else {
+        Log-Error "Lite-agent service $ServiceName did not become running"
+    }
     exit 1
 }
-if (-not $CustomLayout -and $ServiceName -ne $LegacyServiceName) {
+if (-not $CustomLayout -and $ServiceName -ne $LegacyServiceName -and (Test-AgentServiceExists $LegacyServiceName)) {
     Log-Step "Retiring legacy service $LegacyServiceName after Lite-agent is running..."
-    nssm set $LegacyServiceName AppExit Default Exit 2>&1 | Out-Null
+    & nssm set $LegacyServiceName AppExit Default Exit 2>&1 | Out-Null
     Remove-AgentService -Name $LegacyServiceName
 }
 Log-Success "Service $ServiceName installed and started using nssm."
