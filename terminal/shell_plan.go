@@ -78,12 +78,66 @@ func selectTerminalShell(passwdShell string, lookup func(string) bool) (string, 
 	return "", fmt.Errorf("no supported shell found among %v", fallback)
 }
 
-func motdShellPreludeFor(shell string) string {
-	suffix := `exec "$1"`
-	if shellWantsInteractiveFlag(shell) {
-		suffix = `exec "$1" -i`
+// bash 只加 -i 时，readline 会补命令名（shut → shutdown），
+// 但 ip 这类子命令要 bash-completion。很多系统把这段挂在登录 profile 上，
+// 非登录的交互 shell 读不到。这里在最终的 bash 里补加载，不改成登录 shell。
+const bashCompletionExec = `rc="$HOME/.cache/lite-agent/bashrc"
+mkdir -p "$HOME/.cache/lite-agent" && cat > "$rc" << 'LITE_BASHRC'
+if [ -f /etc/bash.bashrc ]; then
+  . /etc/bash.bashrc
+fi
+if [ -f "$HOME/.bashrc" ]; then
+  . "$HOME/.bashrc"
+fi
+if ! type _completion_loader >/dev/null 2>&1 && ! type __load_completion >/dev/null 2>&1; then
+  if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+  elif [ -f /etc/bash_completion ]; then
+    . /etc/bash_completion
+  elif [ -f /etc/profile.d/bash_completion.sh ]; then
+    . /etc/profile.d/bash_completion.sh
+  fi
+fi
+LITE_BASHRC
+if [ -f "$rc" ]; then
+  exec "$1" -i --rcfile "$rc"
+fi
+exec "$1" -i`
+
+// zsh 没有 compinit 时同样只补命令名。用单独的 ZDOTDIR 接上用户的 zshrc，再初始化补全。
+const zshCompletionExec = `rcdir="$HOME/.cache/lite-agent/zsh"
+mkdir -p "$rcdir" && cat > "$rcdir/.zshrc" << 'LITE_ZSHRC'
+if [ -n "$LITE_AGENT_ZSHRC" ]; then
+  return
+fi
+LITE_AGENT_ZSHRC=1
+if [ -f "$HOME/.zshrc" ]; then
+  . "$HOME/.zshrc"
+fi
+autoload -Uz compinit
+compinit -u
+LITE_ZSHRC
+if [ -f "$rcdir/.zshrc" ]; then
+  ZDOTDIR="$rcdir" exec "$1" -i
+fi
+exec "$1" -i`
+
+func motdExecScript(shell string) string {
+	switch shellBaseName(shell) {
+	case "bash":
+		return bashCompletionExec
+	case "zsh":
+		return zshCompletionExec
+	default:
+		if shellWantsInteractiveFlag(shell) {
+			return `exec "$1" -i`
+		}
+		return `exec "$1"`
 	}
-	return motdPreludePrefix + suffix
+}
+
+func motdShellPreludeFor(shell string) string {
+	return motdPreludePrefix + motdExecScript(shell)
 }
 
 func buildMotdShellCommand(shell string) *exec.Cmd {

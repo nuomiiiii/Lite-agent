@@ -76,7 +76,7 @@ func TestSelectTerminalShell(t *testing.T) {
 }
 
 func TestMotdPreludeInteractiveFlag(t *testing.T) {
-	interactive := []string{"/bin/bash", "zsh", "/usr/bin/fish", "/bin/ksh", "mksh", "/bin/dash", "/bin/ash", "sh", "/bin/csh", "/usr/bin/tcsh"}
+	interactive := []string{"/usr/bin/fish", "/bin/ksh", "mksh", "/bin/dash", "/bin/ash", "sh", "/bin/csh", "/usr/bin/tcsh"}
 	for _, shell := range interactive {
 		prelude := motdShellPreludeFor(shell)
 		if !strings.HasSuffix(prelude, `exec "$1" -i`) {
@@ -91,6 +91,18 @@ func TestMotdPreludeInteractiveFlag(t *testing.T) {
 		if !strings.HasPrefix(prelude, motdPreludePrefix) {
 			t.Fatalf("%s prelude changed the motd prefix: %q", shell, prelude)
 		}
+	}
+
+	bashPrelude := motdShellPreludeFor("/bin/bash")
+	if !strings.Contains(bashPrelude, `exec "$1" -i --rcfile "$rc"`) || !strings.Contains(bashPrelude, "/usr/share/bash-completion/bash_completion") {
+		t.Fatalf("bash prelude = %q", bashPrelude)
+	}
+	if strings.Contains(bashPrelude, `||`) || strings.Contains(bashPrelude, `exec "$0"`) {
+		t.Fatalf("bash prelude = %q", bashPrelude)
+	}
+	zshPrelude := motdShellPreludeFor("/usr/bin/zsh")
+	if !strings.Contains(zshPrelude, `ZDOTDIR="$rcdir" exec "$1" -i`) || !strings.Contains(zshPrelude, "compinit -u") {
+		t.Fatalf("zsh prelude = %q", zshPrelude)
 	}
 
 	plain := motdShellPreludeFor("/usr/bin/nu")

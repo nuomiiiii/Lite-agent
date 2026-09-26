@@ -15,7 +15,7 @@ import (
 
 // newTerminalImpl 创建一个新的终端实例。
 // 从 /etc/passwd 查找默认 shell；sh、dash、ash 会改用已安装的 zsh 或 bash。
-// 支持 -i 的 shell 在打印 motd 后以交互模式启动。pty 失败时回退为无参数 shell。
+// 支持 -i 的 shell 在打印 motd 后以交互模式启动。bash、zsh 还会加载系统的参数补全。pty 失败时回退为无参数 shell。
 func newTerminalImpl() (*terminalImpl, error) {
 	passwdShell := ""
 	userHomeDir, err := os.UserHomeDir()
